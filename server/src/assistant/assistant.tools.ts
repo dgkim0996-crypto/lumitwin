@@ -6,15 +6,22 @@ import {
   LINES,
   LOSS_INFO,
   LOSS_KEYS,
+  MAINT_MIN_FAILURES,
+  MTBF_WARN,
+  MTTR_WARN,
+  PM_STATUS_NAMES,
   STATIONS,
+  maintenanceTotals,
   type AlarmLive,
   type LossTimes,
   type AssistantRef,
   type LineCode,
+  type StationMaintenance,
   type StationState,
   type TraceNode,
 } from '@lumitwin/shared';
 import { LiveService } from '../live/live.service';
+import { MaintenanceService } from '../maintenance/maintenance.service';
 import { OperatorService } from '../operator/operator.service';
 import { ProductionService } from '../production/production.service';
 import { StandardsIndex } from './standards.index';
@@ -44,6 +51,8 @@ const LOT_MIN_NG = 5;
 
 const pct = (v: number) => Math.round(v * 1000) / 10;
 const r2 = (v: number) => Math.round(v * 100) / 100;
+/** 분 → '35분' · '12.5시간' (모의 모드 답과 같은 표기) */
+const minText = (v: number | null) => (v == null ? '−' : v >= 120 ? `${(v / 60).toFixed(1)}시간` : `${Math.round(v)}분`);
 /** 측정값은 유효숫자 4자리로 (8.024999999999999 → 8.025). 크기가 제각각이라 소수 자릿수로 자르면 안 된다 */
 const sig4 = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? null : Number(v.toPrecision(4)));
 /** 가상 시각을 한국 시간 'MM-DD HH:mm'으로 */
@@ -175,6 +184,12 @@ export const TOOL_DEFS: Anthropic.Beta.Messages.BetaTool[] = [
     input_schema: { type: 'object', properties: { line: LINE_PROP }, additionalProperties: false },
   },
   {
+    name: 'maintenance',
+    description:
+      '설비 보전: 이번 실행의 고장 건수·고장 시간, MTBF(평균 고장 간격)·MTTR(평균 수리 시간) 실적과 설계값, 가용도, 계획 보전(PM)이 주기를 넘겼거나 임박한 설비와 할 일, 고장 사유별 합계, 최근 고장 이력, 작업 전 점검 기록. 고장이 잦거나 수리가 오래 걸리는 설비, 보전 일정을 답할 때 쓴다. 라인이나 설비 하나로 거를 수 있다.',
+    input_schema: { type: 'object', properties: { line: LINE_PROP, station: STATION_PROP }, additionalProperties: false },
+  },
+  {
     name: 'hourly_output',
     description: '라인의 시간대별(가상 시각) 완성 수와 불량 수, 시간당 목표. 최근 12시간.',
     input_schema: { type: 'object', properties: { line: LINE_PROP }, required: ['line'], additionalProperties: false },
@@ -222,6 +237,7 @@ export function toolLabel(name: string, input: Input): string {
     case 'defect_pareto': return `불량 파레토 조회${arg('line')}`;
     case 'defect_factors': return `불량 요인 비교${arg('station')}${arg('defect')}`;
     case 'six_losses': return `6대 로스 조회${arg('line')}`;
+    case 'maintenance': return `설비 보전 조회${arg('station')}${arg('line')}`;
     case 'hourly_output': return `시간대별 실적 조회${arg('line')}`;
     case 'trace_serial': return `시리얼 추적${arg('serial')}`;
     case 'lot_trace': return `LOT 영향 범위 조회${arg('lot')}`;
@@ -239,6 +255,7 @@ export class AssistantTools {
     private readonly production: ProductionService,
     private readonly standards: StandardsIndex,
     private readonly operator: OperatorService,
+    private readonly maintenance: MaintenanceService,
   ) {}
 
   async run(name: string, input: Input): Promise<ToolOutcome> {
@@ -251,6 +268,7 @@ export class AssistantTools {
         case 'defect_pareto': return await this.pareto(input);
         case 'defect_factors': return await this.factors(input);
         case 'six_losses': return this.losses(input);
+        case 'maintenance': return await this.maintenanceReport(input);
         case 'hourly_output': return await this.hourly(input);
         case 'trace_serial': return await this.trace(input);
         case 'lot_trace': return await this.lot(input);
@@ -486,6 +504,80 @@ export class AssistantTools {
       ok: true, data,
       summary: `OEE ${data.oeePct ?? '−'}%${big ? ` · 가장 큰 로스 ${LOSS_INFO[big].name} ${pct(scope.loss[big] / (scope.planned || 1))}%` : ''}`,
       refs: [...new Set(top.slice(0, 4).map((x) => x.station))].map(stationRef).concat({ kind: 'page', id: '/losses', label: '6대 로스' }),
+    };
+  }
+
+  async maintenanceReport(input: Input): Promise<ToolOutcome> {
+    const line = lineArg(input);
+    if (!line.ok) return fail(line.error);
+    const st = stationArg(input, false);
+    if (!st.ok) return fail(st.error, 'candidates' in st ? { candidates: st.candidates } : undefined);
+    const r = await this.maintenance.report();
+    const inScope = (code: string) => (st.v ? code === st.v : !line.v || STATIONS[code]?.line === line.v);
+    const list = r.stations.filter((s) => inScope(s.station));
+    const t = maintenanceTotals(list);
+    const m1 = (v: number | null) => (v == null ? null : Math.round(v * 10) / 10);
+    const h1 = (sec: number) => Math.round(sec / 360) / 10;
+    const view = (s: StationMaintenance) => {
+      const few = s.failures < MAINT_MIN_FAILURES;
+      return {
+        station: s.station, stationName: STATIONS[s.station]?.name, downNow: s.down, failures: s.failures, downMin: m1(s.downSec / 60),
+        mtbfMin: m1(s.mtbf), designMtbfMin: s.designMtbf, mttrMin: m1(s.mttr), designMttrMin: s.designMttr,
+        availabilityPct: s.availability != null ? pct(s.availability) : null,
+        fewSamples: few,
+        frequent: !few && s.mtbf != null && s.mtbf < s.designMtbf * MTBF_WARN,
+        slowRepair: !few && s.mttr != null && s.mttr > s.designMttr * MTTR_WARN,
+        lastFailure: s.lastFailure ? { t: kst(s.lastFailure.start), reason: s.lastFailure.reason, repairing: !s.lastFailure.end, byOperator: s.lastFailure.byOperator } : null,
+      };
+    };
+    const pmView = (s: StationMaintenance) => ({
+      station: s.station, stationName: STATIONS[s.station]?.name, status: PM_STATUS_NAMES[s.pm.status], task: s.pm.plan.task, standardMin: s.pm.plan.minutes,
+      everyH: s.pm.plan.every, sinceH: h1(s.pm.sinceSec), leftH: h1(s.pm.plan.every * 3600 - s.pm.sinceSec), last: s.pm.lastAt ? kst(s.pm.lastAt) : '이번 실행에서 안 함',
+    });
+    const failures = r.failures.filter((f) => inScope(f.station));
+    // 사유 합계는 범위 안 고장에서 다시 모은다 (이력은 최근 300건까지)
+    const byReason = new Map<string, { reason: string; count: number; min: number; stations: Set<string> }>();
+    for (const f of failures) {
+      const x = byReason.get(f.reason) ?? { reason: f.reason, count: 0, min: 0, stations: new Set<string>() };
+      x.count++;
+      x.min += f.sec / 60;
+      x.stations.add(f.station);
+      byReason.set(f.reason, x);
+    }
+    const reasons = [...byReason.values()].sort((a, b) => b.min - a.min).slice(0, 6).map((x) => ({ reason: x.reason, count: x.count, minutes: m1(x.min), stations: [...x.stations] }));
+    const recent = failures.slice(0, st.v ? 10 : 8).map((f) => ({
+      station: f.station, t: kst(f.start), reason: f.reason, minutes: m1(f.sec / 60), repairing: !f.end, byOperator: f.byOperator,
+    }));
+    const worst = list.filter((s) => s.failures > 0).sort((a, b) => b.downSec - a.downSec).slice(0, 8);
+    const urgent = list
+      .filter((s) => s.pm.status !== 'ok')
+      .sort((a, b) => a.pm.plan.every * 3600 - a.pm.sinceSec - (b.pm.plan.every * 3600 - b.pm.sinceSec))
+      .slice(0, 8);
+    const note =
+      `MTBF = 가동 시간(실행 시간 − 고장 − 계획 정지 − 셋업) ÷ 고장 수, MTTR = 수리를 끝낸 고장의 평균 시간(분, 가상 시간). 설계값은 시뮬레이터 고장 모델의 평균이다. ` +
+      `고장이 ${MAINT_MIN_FAILURES}건 미만이면(fewSamples) 실적을 믿기 어렵다. frequent는 MTBF가 설계의 ${MTBF_WARN * 100}% 밑, slowRepair는 MTTR이 설계의 ${MTTR_WARN}배 위. ` +
+      '계획 보전 주기·할 일은 설비 종류별 가정값이고, 가동 시간 기준이다. 계획 보전은 작업자 태블릿에서 계획 정지 사유 "계획 보전"으로 세웠다가 다시 돌리면 기록된다.';
+    const scopeName = st.v ? `${st.v} ${STATIONS[st.v]?.name ?? ''}` : line.v ? LINES.find((l) => l.code === line.v)?.name : '공장 전체';
+    const one = st.v ? list[0] : undefined;
+    const data = {
+      scope: scopeName,
+      virtualTime: kst(r.t), runStarted: kst(r.runStartedAt),
+      totals: {
+        failures: t.failures, downMin: m1(t.downSec / 60), mtbfMin: m1(t.mtbf), mttrMin: m1(t.mttr),
+        availabilityPct: t.availability != null ? pct(t.availability) : null, downNow: t.downNow, pmOverdue: t.pmDue, pmSoon: t.pmSoon,
+      },
+      ...(one
+        ? { station: { ...view(one), pm: pmView(one), lastCheck: one.check ? { t: kst(one.check.at), ngItems: one.check.ngCount } : null } }
+        : { worstStations: worst.map(view), pmUrgent: urgent.map(pmView) }),
+      reasons, recentFailures: recent, note,
+    };
+    const refs: AssistantRef[] = [...new Set([...(one ? [one.station] : []), ...worst.slice(0, 4).map((s) => s.station), ...urgent.filter((s) => s.pm.status === 'due').slice(0, 2).map((s) => s.station)])]
+      .map(stationRef)
+      .concat({ kind: 'page', id: '/maintenance', label: '설비 보전' });
+    return {
+      ok: true, data,
+      summary: `고장 ${t.failures}건 · MTBF ${minText(m1(t.mtbf))} · MTTR ${minText(m1(t.mttr))} · 계획 보전 초과 ${t.pmDue}대`,
+      refs,
     };
   }
 

@@ -3,7 +3,7 @@
 // 실행: npm test -w shared (먼저 npm run build -w shared)
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { FACTORY, STATIONS } from '../dist/index.mjs';
+import { FACTORY, OPERATOR_REASONS, PM_PLANS, PM_REASON, STATIONS } from '../dist/index.mjs';
 
 const lines = FACTORY.lines;
 const allStations = lines.flatMap((l) => l.stations.map((s) => ({ ...s, line: l.code })));
@@ -27,6 +27,16 @@ describe('공장 정의', () => {
     assert.deepEqual(lines.map((l) => l.code), ['HL', 'EM', 'OSM']);
     assert.equal(allStations.length, 38);
     assert.equal(Object.keys(STATIONS).length, 38);
+  });
+
+  it('모든 설비에 고장 모델(MTBF·MTTR)과 계획 보전 기준이 있다', () => {
+    for (const s of allStations) {
+      assert.ok(s.mtbf > 0 && s.mttr > 0, `${s.code} mtbf·mttr`);
+      const pm = PM_PLANS[s.kind];
+      assert.ok(pm && pm.every > 0 && pm.minutes > 0 && pm.task, `${s.code}(${s.kind}) 계획 보전 기준`);
+    }
+    // 작업자가 계획 정지 사유로 고를 수 있어야 계획 보전 실시가 기록된다
+    assert.ok(OPERATOR_REASONS.stop.includes(PM_REASON));
   });
 
   it('설비 코드가 겹치지 않는다', () => {

@@ -30,6 +30,7 @@ import {
 import { MqttBrokerService, type MqttInbound } from '../mqtt/mqtt-broker.service';
 import { roundLosses, stationLosses, sumLosses } from './losses';
 import { r3, stationOee, type StateTimes } from './oee';
+import { aheadLimitMs, outOfRun } from './run-clock';
 import { buildSeries, SPC_KEEP_POINTS, type SpcSeries } from './spc';
 
 type Station = StationDef & { line: LineDef['code'] };
@@ -155,6 +156,8 @@ export class LiveService implements OnModuleInit {
    * 어느 실행의 값인지 모른 채 세면 메모리 집계와 DB 기록이 어긋난다 (DB 쪽은 실행을 모르면 버린다)
    */
   private held: MqttInbound[] | null = [];
+  /** 이번 실행에서 다른 실행의 시각이라 버린 설비 메시지 수 (처음 한 번만 로그를 남긴다) */
+  private staleDropped = 0;
 
   constructor(private readonly mqtt: MqttBrokerService) {
     this.reset();
@@ -192,6 +195,14 @@ export class LiveService implements OnModuleInit {
       else if (parts[1] === 'event') this.onEvent(payload as SimEventMsg);
       return;
     }
+    // 설비·AMR 메시지는 시뮬레이터 상태가 알려 준 실행 구간 안의 시각만 받는다 (run-clock.ts)
+    const t = (payload as { t?: string } | null)?.t;
+    if (outOfRun(Date.parse(t ?? ''), this.sim)) {
+      if (this.staleDropped++ === 0) {
+        this.logger.warn(`지금 실행의 시각이 아닌 설비 메시지를 버렸습니다: ${parts.join('/')} ${t} (실행 ${this.sim?.startedAt} · 시뮬레이터 시각 ${this.sim?.t})`);
+      }
+      return;
+    }
     if (parts[0] === 'amr') {
       const msg = payload as AmrMsg;
       this.amrs[parts[1]] = msg;
@@ -223,6 +234,9 @@ export class LiveService implements OnModuleInit {
     }
     this.sim = msg;
     this.lastSimAt = Date.now();
+    // 시계는 시뮬레이터 상태가 기준이다. 한참 앞서 있으면(이전 실행의 늦은 메시지가 섞였던 기록으로 되살린 경우 등) 되돌린다
+    const simMs = Date.parse(msg.t);
+    if (Number.isFinite(simMs) && this.nowMs > simMs + aheadLimitMs(msg.speed)) this.nowMs = simMs;
     this.advance(msg.t);
   }
 
@@ -607,6 +621,7 @@ export class LiveService implements OnModuleInit {
 
   private reset(): void {
     this.nowMs = 0;
+    this.staleDropped = 0;
     this.sim = null;
     this.amrs = {};
     this.alarms = [];

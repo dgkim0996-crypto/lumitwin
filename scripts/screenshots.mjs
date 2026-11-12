@@ -3,14 +3,13 @@
 //   node scripts/screenshots.mjs                 모든 화면
 //   node scripts/screenshots.mjs losses spc      고른 화면만
 // 결과: docs/images/<이름>.png · 브라우저 경로는 BROWSER 환경 변수로 바꿀 수 있다
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { root } from './pyvenv.mjs';
 
 const BASE = process.env.SHOT_BASE ?? 'http://localhost:5180';
-const PORT = 9333;
 const OUT = join(root, 'docs', 'images');
 const CANDIDATES = [
   process.env.BROWSER,
@@ -39,6 +38,7 @@ const SHOTS = [
   },
   { name: 'production', url: '/production', wait: 5000 },
   { name: 'losses', url: '/losses', wait: 5000 },
+  { name: 'maintenance', url: '/maintenance', wait: 5000 },
   { name: 'spc', url: '/spc', wait: 5000 },
   { name: 'quality', url: '/quality', wait: 6000 },
   { name: 'trace', url: '/trace', wait: 5000 },
@@ -61,6 +61,44 @@ async function waitJson(url, tries = 50) {
     await sleep(200);
   }
   throw new Error(`응답 없음: ${url}`);
+}
+
+/** 브라우저가 고른 디버깅 포트. 고정 포트를 쓰면 지난번에 덜 닫힌 브라우저에 붙어 그 탭의 대화·상태가 섞여 찍힌다 */
+async function devtoolsPort(profile, tries = 100) {
+  const file = join(profile, 'DevToolsActivePort');
+  for (let i = 0; i < tries; i++) {
+    try {
+      const port = Number(readFileSync(file, 'utf8').split('\n')[0]);
+      if (port > 0) return port;
+    } catch {}
+    await sleep(100);
+  }
+  throw new Error('브라우저 디버깅 포트를 알아내지 못했습니다');
+}
+
+/**
+ * 브라우저를 닫는다. 실행 파일 프로세스만 죽이면 Windows에서는 렌더러·GPU 프로세스가 남아 프로필 폴더를 잡고 있으므로,
+ * 먼저 DevTools의 Browser.close로 정상 종료시키고, 3초 안에 안 끝나면 프로세스 트리째 강제로 닫는다
+ */
+async function closeBrowser(child, wsUrl) {
+  let closed = !wsUrl;
+  if (wsUrl) {
+    try {
+      const cdp = await Cdp.open(wsUrl);
+      cdp.send('Browser.close').catch(() => {});
+    } catch {}
+    // 디버깅 포트가 닫히면 브라우저가 끝난 것이다
+    const version = wsUrl.replace(/^ws/, 'http').replace(/\/devtools\/.*$/, '/json/version');
+    for (let i = 0; i < 30 && !closed; i++) {
+      await sleep(100);
+      closed = await fetch(version).then(() => false, () => true);
+    }
+  }
+  if (!closed || child.exitCode == null) {
+    if (process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    else child.kill('SIGKILL');
+  }
+  await sleep(500); // 프로필 폴더의 파일 잠금이 풀리길 기다린다
 }
 
 class Cdp {
@@ -157,7 +195,7 @@ async function main() {
     findBrowser(),
     [
       '--headless=new',
-      `--remote-debugging-port=${PORT}`,
+      '--remote-debugging-port=0',
       `--user-data-dir=${profile}`,
       '--window-size=1440,900',
       '--hide-scrollbars',
@@ -169,9 +207,11 @@ async function main() {
     ],
     { stdio: 'ignore' },
   );
+  let browserWs = null;
   try {
-    await waitJson(`http://127.0.0.1:${PORT}/json/version`);
-    const page = (await waitJson(`http://127.0.0.1:${PORT}/json/list`)).find((t) => t.type === 'page');
+    const port = await devtoolsPort(profile);
+    browserWs = (await waitJson(`http://127.0.0.1:${port}/json/version`)).webSocketDebuggerUrl;
+    const page = (await waitJson(`http://127.0.0.1:${port}/json/list`)).find((t) => t.type === 'page');
     const cdp = await Cdp.open(page.webSocketDebuggerUrl);
     await cdp.send('Page.enable');
     await cdp.send('Runtime.enable');
@@ -187,8 +227,7 @@ async function main() {
     }
     cdp.ws.close();
   } finally {
-    browser.kill();
-    await sleep(500);
+    await closeBrowser(browser, browserWs);
     try {
       rmSync(profile, { recursive: true, force: true });
     } catch {}

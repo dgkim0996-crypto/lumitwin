@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { LiveModule } from '../live/live.module';
+import { MaintenanceModule } from '../maintenance/maintenance.module';
 import { OperatorModule } from '../operator/operator.module';
 import { ProductionModule } from '../production/production.module';
 import { AssistantController } from './assistant.controller';
@@ -9,7 +10,7 @@ import { StandardsIndex } from './standards.index';
 import { SttService } from './stt.service';
 
 @Module({
-  imports: [LiveModule, ProductionModule, OperatorModule],
+  imports: [LiveModule, ProductionModule, OperatorModule, MaintenanceModule],
   controllers: [AssistantController],
   providers: [AssistantService, AssistantTools, StandardsIndex, SttService],
 })
