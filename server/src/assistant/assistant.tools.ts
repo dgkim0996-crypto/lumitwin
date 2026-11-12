@@ -289,6 +289,12 @@ export class AssistantTools {
     for (const a of unacked) byKind[ALARM_KIND_NAMES[a.kind] ?? a.kind] = (byKind[ALARM_KIND_NAMES[a.kind] ?? a.kind] ?? 0) + 1;
     const data = {
       virtualTime: kst(this.live.virtualNow), speed: s.sim?.speed ?? null, running: s.sim?.running ?? null, simConnected: s.connected.sim,
+      dataPath: s.sim?.link === 'opcua' ? '가상 PLC(OPC UA) → 엣지 게이트웨이 → MQTT → MES' : '시뮬레이터 → MQTT → MES',
+      ...(s.sim?.link === 'opcua' && {
+        edgeGateway: s.connected.edge && s.edge
+          ? { opcua: s.edge.opcua, mqtt: s.edge.mqtt, stations: s.edge.stations, tags: s.edge.tags, buffered: s.edge.buffered, missingUnits: s.edge.gaps, reconnects: s.edge.reconnects }
+          : '응답 없음',
+      }),
       lines, stationsByState: byState, stopped,
       alarms: { unacked: unacked.length, byKind, latest: unacked.slice(0, 6).map(alarmView) },
     };

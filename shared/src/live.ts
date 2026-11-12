@@ -11,6 +11,7 @@ export const TOPICS = {
   amr: (code: string) => `${TOPIC_ROOT}/amr/${code}`,
   simStatus: `${TOPIC_ROOT}/sim/status`,
   simEvent: `${TOPIC_ROOT}/sim/event`,
+  edgeStatus: `${TOPIC_ROOT}/edge/status`,
   cmd: `${TOPIC_ROOT}/cmd`,
 } as const;
 
@@ -70,6 +71,8 @@ export interface SimStatusMsg {
   startedAt: string;
   speed: number;
   running: boolean;
+  /** 설비 신호가 오는 길: mqtt = 시뮬레이터가 브로커로 바로 · opcua = 가상 PLC(OPC UA) → 엣지 게이트웨이 → 브로커 */
+  link?: DataLink;
   scenarios: { id: string; startedAt: string; level: number }[];
   /** `${line}.${step}` → 출력 버퍼 개수 */
   buffers: Record<string, number>;
@@ -79,6 +82,32 @@ export interface SimStatusMsg {
   warehouse: Record<string, number>;
   /** 출하 유출(검사를 빠져나간 잠재 불량) 누계 */
   escaped: Record<string, number>;
+}
+
+export type DataLink = 'mqtt' | 'opcua';
+
+/** 엣지 게이트웨이(OPC UA → MQTT) 상태. 2초마다 온다 (실제 시각) */
+export interface EdgeStatusMsg {
+  t: string;
+  endpoint: string;
+  opcua: 'connected' | 'connecting';
+  mqtt: boolean;
+  /** 이번 OPC UA 연결이 붙은 시각 */
+  since: string | null;
+  reconnects: number;
+  /** 탐색으로 찾은 설비·태그 수 */
+  stations: number;
+  tags: number;
+  /** OPC UA에서 받은 것: value = 태그 값 알림, state·unit = 이벤트 */
+  received: Record<string, number>;
+  /** MQTT로 보낸 것 (tags·state·unit·status) */
+  sent: Record<string, number>;
+  /** MQTT가 끊긴 동안 쌓아 둔 기록 수, 버퍼가 넘쳐 버린 기록 수, 끊긴 동안 버린 태그 묶음 수 */
+  buffered: number;
+  dropped: number;
+  skipped: number;
+  /** 생산 실적 순번이 건너뛴 수 (빠진 기록) */
+  gaps: number;
 }
 
 export interface SimEventMsg {
@@ -159,7 +188,14 @@ export interface LiveSnapshot {
   lines: Record<string, LineLive>;
   amrs: Record<string, AmrMsg>;
   alarms: AlarmLive[];
-  connected: { sim: boolean };
+  edge: EdgeStatusMsg | null;
+  connected: LiveConnected;
+}
+
+/** sim = 시뮬레이터 상태 메시지가 오는가 · edge = 엣지 게이트웨이 상태가 오는가 (OPC UA 경로일 때만 의미가 있다) */
+export interface LiveConnected {
+  sim: boolean;
+  edge: boolean;
 }
 
 /** 소켓 이벤트 이름 */
@@ -176,7 +212,8 @@ export interface TickPayload {
   stations: Record<string, StationLive>;
   lines: Record<string, LineLive>;
   amrs: Record<string, AmrMsg>;
-  connected: { sim: boolean };
+  edge: EdgeStatusMsg | null;
+  connected: LiveConnected;
 }
 
 // ─────────────────────────── SPC (X̄-R 관리도) ───────────────────────────

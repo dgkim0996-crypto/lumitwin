@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_FACTORY = Path(__file__).resolve().parents[2] / 'shared' / 'dist' / 'factory.json'
@@ -19,6 +20,16 @@ def load_factory(path: str | None = None) -> dict:
         raise SystemExit(f'[sim] 공장 정의가 없습니다: {p}\n        먼저 `npm run build -w shared` 를 실행하세요.')
     with open(p, encoding='utf-8') as f:
         return json.load(f)
+
+
+def iso(dt: datetime) -> str:
+    """UTC ISO 시각, 밀리초까지 (예: 2026-11-12T03:04:05.678Z). 시간대가 없는 값은 UTC로 본다"""
+    dt = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+    return dt.strftime('%Y-%m-%dT%H:%M:%S.') + f'{dt.microsecond // 1000:03d}Z'
+
+
+def parse_iso(s: str) -> datetime:
+    return datetime.fromisoformat(s.replace('Z', '+00:00'))
 
 
 def sigmoid(x: float) -> float:

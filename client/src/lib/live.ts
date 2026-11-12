@@ -7,6 +7,7 @@ import {
   SOCKET,
   type AlarmLive,
   type AmrMsg,
+  type EdgeStatusMsg,
   type LineLive,
   type LiveSnapshot,
   type SimEventMsg,
@@ -23,6 +24,9 @@ interface LiveState {
   socket: boolean;
   sim: SimStatusMsg | null;
   simConnected: boolean;
+  /** 엣지 게이트웨이(OPC UA → MQTT) 상태. OPC UA 경로로 돌 때만 온다 */
+  edge: EdgeStatusMsg | null;
+  edgeConnected: boolean;
   stations: Record<string, StationLive>;
   lines: Record<string, LineLive>;
   amrs: Record<string, AmrMsg>;
@@ -47,6 +51,8 @@ export const useLive = create<LiveState>((set) => ({
   socket: false,
   sim: null,
   simConnected: false,
+  edge: null,
+  edgeConnected: false,
   stations: {},
   lines: {},
   amrs: {},
@@ -69,7 +75,16 @@ let socket: Socket | null = null;
 let users = 0;
 
 function applyTick(t: TickPayload) {
-  useLive.setState({ sim: t.sim, stations: t.stations, lines: t.lines, amrs: t.amrs, simConnected: t.connected.sim, tickAt: performance.now() });
+  useLive.setState({
+    sim: t.sim,
+    stations: t.stations,
+    lines: t.lines,
+    amrs: t.amrs,
+    simConnected: t.connected.sim,
+    edge: t.edge,
+    edgeConnected: t.connected.edge,
+    tickAt: performance.now(),
+  });
 }
 
 /** 실시간 연결을 연다. 여러 컴포넌트가 불러도 소켓은 하나만 쓴다 */

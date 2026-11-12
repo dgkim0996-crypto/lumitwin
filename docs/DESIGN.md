@@ -23,6 +23,10 @@
                                │  AI: LLM 도구호출·RAG·STT   │
                                └───────────────────────────┘
 shared/ (TypeScript) — 공장 정의(라인·설비·태그·불량·시나리오)의 단일 원본. 빌드하면 factory.json을 내보내 Python 시뮬레이터도 같은 정의를 읽는다.
+
+선택: OPC UA 경로 (npm run dev:opcua, 5.7)
+sim/ 시뮬레이터 ──▶ 가상 PLC (OPC UA 서버 4840) ──구독·이벤트──▶ 엣지 게이트웨이 (sim/lumisim/edge.py) ──MQTT──▶ server/
+         └── AMR·시뮬레이터 상태·명령은 MQTT로 바로 ─────────────────────────────────────────────────────────▶
 ```
 
 | 폴더 | 기술 | 출처 |
@@ -30,7 +34,7 @@ shared/ (TypeScript) — 공장 정의(라인·설비·태그·불량·시나리
 | `shared/` | TypeScript, tsup | 판타스틸 ERP `shared/` 빌드 방식 |
 | `server/` | NestJS 12, Prisma 7, PostgreSQL(embedded-postgres), Socket.io, aedes | 판타스틸 ERP `server/` 골격·DB 스크립트 |
 | `client/` | Next.js 16, React 19, React Three Fiber, Tailwind 4, TanStack Query, zustand | 판타스틸 ERP `client/` 스택 + 3D 프로젝트 three.js 뷰어 설정 |
-| `sim/` | Python 3, SimPy, paho-mqtt | 새로 작성 |
+| `sim/` | Python 3, SimPy, paho-mqtt, asyncua(선택: OPC UA 경로) | 새로 작성 |
 | `tools/whisper/` | Python 3, faster-whisper | 새로 작성 (선택: 로컬 음성 받아쓰기) |
 
 포트: 화면 5180 · API 8790 · MQTT 1884 · DB 54332 (판타스틸 ERP와 동시에 띄워도 겹치지 않게).
@@ -132,11 +136,12 @@ lt/v1/{line}/{station}/tags     연속 태그 (실시간 1초마다)      {t, v:
 lt/v1/{line}/{station}/state    상태 변경                        {t, state, reason}
 lt/v1/{line}/{station}/unit     가공 완료 1건                    {t, serial, product, result, defect, values, comps, lots, cycle}
 lt/v1/amr/{id}                  AMR 위치·작업                    {t, x, z, heading, task, battery, load}
-lt/v1/sim/status                시뮬레이터 상태                  {t, speed, running, scenarios, buffers}
+lt/v1/sim/status                시뮬레이터 상태                  {t, speed, running, link, scenarios, buffers}
+lt/v1/edge/status               엣지 게이트웨이 상태 (OPC UA 경로일 때, 실제 2초마다)
 lt/v1/cmd                       MES → 시뮬레이터 명령 (속도·일시정지·초기화·시나리오·설비 정지/재가동/고장/수리)
 ```
 
-ISA-95의 계층(사이트/영역/라인/셀)을 토픽 경로로 따랐다. 실제 공장이라면 PLC → OPC UA → 엣지 게이트웨이 → MQTT(Sparkplug B) 경로에 해당한다.
+ISA-95의 계층(사이트/영역/라인/셀)을 토픽 경로로 따랐다. 실제 공장의 PLC → OPC UA → 엣지 게이트웨이 → MQTT 경로도 따로 만들어 두었다([5.7](#57-opc-ua-경로-가상-plc--엣지-게이트웨이)). 어느 경로로 오든 토픽과 JSON 모양이 같아 MES는 바뀌지 않는다.
 
 ### 5.2 시간
 
@@ -217,7 +222,47 @@ MQTT로 들어온 메시지는 메모리 큐에 쌓았다가 1초마다 한 트�
 - **순서**: MQTT 브로커는 모든 모듈 초기화(복원 포함)가 끝난 뒤에 접속을 받는다(`onApplicationBootstrap`). 복원하는 동안 들어온 값이 복원 결과에 덮여 사라지지 않게 하려는 것이다. 시뮬레이터는 1~5초 간격으로 다시 붙는다.
 - **실행 확인**: 시뮬레이터 상태 메시지로 실행을 확인하기 전에 온 값은 붙잡아 두었다가 확인 뒤 처리한다. 그사이 시뮬레이터가 새 실행을 시작했으면 복원한 집계를 버리고 새로 센다. 어느 실행의 값인지 모른 채 세면 메모리 집계와 DB 기록이 어긋나기 때문이다.
 - **알람 번호**: 실행 안에서 기록된 최댓값 다음부터 이어 매긴다. 예전 버전은 재시작마다 1부터 다시 매겨 번호가 겹쳤는데, 복원할 때 겹친 것 중 오래된 쪽에 새 번호를 한 번 준다. 확인(ack)은 번호와 발생 시각으로 정확히 한 건을 찾는다.
-- **한계**: 서버가 내려가 있던 몇 초 동안 시뮬레이터가 보낸 값은 DB에도 없어서 빠진다(60배속이면 몇 분 분량). 그동안의 시간은 마지막으로 기록된 상태에 들어간다. 강제 종료되면 아직 쓰지 못한 최대 1초 분량의 기록도 빠질 수 있다.
+- **한계**: 서버가 내려가 있던 몇 초 동안 시뮬레이터가 보낸 값은 DB에도 없어서 빠진다(60배속이면 몇 분 분량). 그동안의 시간은 마지막으로 기록된 상태에 들어간다. 강제 종료되면 아직 쓰지 못한 최대 1초 분량의 기록도 빠질 수 있다. OPC UA 경로로 돌리면 엣지 게이트웨이가 MQTT가 끊긴 동안의 상태 변경·생산 실적을 버퍼에 쌓았다가 보내므로 이 구간도 메울 수 있다([5.7](#57-opc-ua-경로-가상-plc--엣지-게이트웨이)).
+
+### 5.7 OPC UA 경로 (가상 PLC → 엣지 게이트웨이)
+
+기본 실행은 시뮬레이터가 MQTT로 바로 보낸다. `npm run dev:opcua`(또는 `python -m lumisim --link opcua` + `python -m lumisim.edge`)로 띄우면 설비 신호가 현장과 같은 길로 들어온다. 시뮬레이터 엔진은 그대로이고, 설비 토픽으로 나가던 메시지를 MQTT 대신 가상 PLC에 쓰는 분배기(`PlcIO`)만 끼운다. 라이브러리는 Python `asyncua` 2.1(선택 의존성, `npm run sim:setup:opcua`).
+
+**가상 PLC (`sim/lumisim/opcua_plc.py`, opc.tcp://127.0.0.1:4840/lumitwin/)**
+
+```
+Objects/LumiTwin                     공장 객체. 아래 두 이벤트를 낸다
+  HL/HL-IM-L1                        라인/설비 (설명 = 설비 이름)
+    State, StateReason               현재 상태·사유 (String)
+    GoodCount, BadCount              양품·불량 누계 (UInt32)
+    Tags/moldTemp …                  태그 (Double, 설명 = 태그 이름, EngineeringUnits 속성)
+이벤트 타입 (BaseEventType 아래)
+  StationStateEventType              Line, Station, State, Reason · 심각도: 고장 700, 정지·셋업 300
+  UnitCompletedEventType             Line, Station, Serial, Result, Defect, Seq(설비별 순번), Record(생산 기록 JSON)
+```
+
+- 값의 SourceTimestamp와 이벤트 Time은 가상 시각이다. 아직 시뮬레이터가 쓰지 않은 값은 `BadWaitingForInitialData`로 두어 0이 진짜 값처럼 나가지 않게 한다.
+- 연속값은 변수로 두고 구독하게 한다. 값이 바뀔 때만 알림이 가므로(Report by Exception) 큐에 쌓을 필요가 없다.
+- 상태 변경·생산 실적은 하나라도 빠지면 OEE·추적이 틀어진다. 그래서 변수가 아니라 **이벤트**로 낸다. 서버가 구독마다 큐(최대 1만 건)에 쌓아 두고 순서대로 보낸다. 변수로 내면 한 발행 주기(0.2초) 안에 두 번 바뀐 상태는 마지막 것만 간다(60배속에서는 흔하다).
+- 서버는 별도 스레드의 이벤트 루프에서 돈다. 시뮬레이터 스레드는 큐에 넣기만 하고, 서버 쪽이 20ms마다 몰아서 쓴다. 시작 0.9초(설비 38대, 태그 81개).
+- 보안: 로컬 시연이라 SecurityPolicy None·익명만 연다. 현장에서는 Basic256Sha256 서명·암호화와 인증서를 쓴다.
+
+**엣지 게이트웨이 (`sim/lumisim/edge.py`)**
+
+| 하는 일 | 방법 |
+|---|---|
+| 태그 목록 알아내기 | 공장 정의 파일을 읽지 않고 주소 공간을 탐색(Browse)한다: LumiTwin → 라인 → 설비 → Tags |
+| 태그 → `tags` 토픽 | 태그 81개를 구독(큐 1, 값이 바뀔 때만)하고, 설비별로 모아 0.2초마다 보낸다. `t`는 그 설비 값 중 가장 늦은 SourceTimestamp |
+| 상태 이벤트 → `state`, 실적 이벤트 → `unit` | 받는 대로 QoS 1로 보낸다. 실적은 `Record`를 그대로 보내 MQTT 직행과 같은 JSON이 된다 |
+| 처음 상태 | 이벤트가 아직 없던 설비도 tags에 현재 상태(`s`)를 실어야 MES가 늦게 붙어도 상태를 안다. 그래서 `State` 변수도 구독하되 처음 한 번만 쓰고, 그 뒤 상태는 이벤트만 바꾼다(변수와 이벤트가 서로 다른 발행 주기에 도착해 상태가 앞뒤로 튀지 않게) |
+| 빠진 실적 세기 | 설비별 `Seq`가 건너뛰면 그만큼 센다. 순번이 줄면 PLC가 다시 시작한 것으로 보고 거기서부터 센다 |
+| MQTT가 끊기면 | `state`·`unit`은 버퍼(최대 2만 건, 넘치면 오래된 것부터 버림)에 쌓았다가 다시 붙으면 순서대로 보낸다(store and forward). `tags`는 최신값만 의미가 있어 버린다 |
+| OPC UA가 끊기면 | 서버 응답 감시(1초)로 알아채고 1→2→…→10초 간격으로 다시 붙어 처음부터 탐색·구독한다 |
+| 자기 상태 | 2초마다 `lt/v1/edge/status`: 연결, 탐색한 설비·태그 수, 받은·보낸 수, 버퍼, 버린 수, 빠진 실적, 재연결 횟수. MES가 받아 화면 위쪽 `OPC UA` 점과 비서의 공장 현황 도구에 보인다 |
+
+- **엣지가 없을 때의 기록은 PLC가 쌓아 둔다.** OPC UA 이벤트는 그 순간 구독 중인 클라이언트에게만 가고 아니면 사라진다. 그래서 가상 PLC는 공장 객체의 이벤트를 구독한 클라이언트가 없으면 설비 신호를 내보내지 않고 쌓아 두었다가(최대 20만 건), 엣지가 붙으면 순서대로 낸다. 엣지가 PLC보다 늦게 뜨거나, 도중에 내려갔다 다시 떠도 실적이 빠지지 않는다. 현장 PLC가 실적 버퍼를 두고 상위 시스템이 받아 간 뒤에 지우는 것과 같은 역할이다. 구독 여부는 asyncua 2.1 내부 구조를 읽어 알아낸다(버전을 고정한 이유).
+- AMR 위치·시뮬레이터 상태·명령은 설비 PLC 신호가 아니라서 지금처럼 MQTT로 바로 오간다. 작업자 명령을 OPC UA 메서드로 PLC에 내리는 것은 하지 않았다.
+- **확인**: `sim/tests/test_opcua.py`. 엣지가 붙은 뒤 고장·수리·셋업을 넣은 가상 20분을 돌려, MQTT 직행이었다면 나갔을 메시지와 엣지가 MQTT로 낸 메시지를 비교한다. 생산 실적과 상태 변경은 설비별 순서·사유까지 같고, 태그는 설비마다 마지막 값이 같다(시각은 마지막으로 값이 바뀐 때라 같거나 이르다). 엣지가 붙기 전·내려간 사이의 기록을 PLC가 쌓아 두었다 내는 것, PLC를 내렸다 다시 올리면 엣지가 다시 붙어 새 이벤트를 받는 것, MQTT 버퍼 순서·넘침도 확인한다.
 
 ## 6. AI 현장 비서
 
@@ -376,7 +421,7 @@ pm2: lumitwin-server · lumitwin-client · lumitwin-sim (+ 선택 lumitwin-whisp
 | P2 | MES 화면 4개: 생산 현황(시간대별 실적·설비 OEE·병목 후보), SPC(관리도·Cpk·히스토그램), 불량 분석(파레토·요인 비교·출하 유출), 추적(시리얼 계보·LOT 품질·회수 범위). 불량 자재 LOT 시나리오. 서버 재시작 때 실시간 집계 복원 | 완료 |
 | P3 | AI 현장 비서: 공장 데이터 도구 11개를 부르는 챗봇(Claude, 키 없는 모의 모드), 작업표준서 15건과 BM25 검색·인용, Whisper 음성 질의(브라우저 음성 인식 대체), 답 속 링크로 화면 이동 | 완료 |
 | P4 | 작업자 태블릿(비가동 사유·셋업 상태, 작업 전 점검 기록과 알람, 표준서 안전·조치 연결, 음성 질문), 무료 공개 링크(Cloudflare Tunnel, 보기 전용·제어 키, 질문 한도), 상시 서버용 Caddy + pm2 스크립트, [데모 대본](DEMO.md) | 완료 (상시 서버에는 안 올림) |
-| P5 | 자동 테스트(공장 정의·OEE·6대 로스·SPC·보기 전용·시뮬레이터)와 GitHub Actions CI, 6대 로스 화면과 비서 도구, 재가동 초품 규칙 | 진행 중 |
+| P5 | 자동 테스트(공장 정의·OEE·6대 로스·SPC·보기 전용·시뮬레이터·OPC UA 경로)와 GitHub Actions CI, 6대 로스 화면과 비서 도구, 재가동 초품 규칙, OPC UA 경로(가상 PLC → 엣지 게이트웨이 → MQTT)와 데이터 경로 표시 | 진행 중 |
 
 ## 9. 근거 등급
 

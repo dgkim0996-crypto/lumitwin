@@ -8,6 +8,7 @@ import {
   STATIONS,
   type AlarmLive,
   type AmrMsg,
+  type EdgeStatusMsg,
   type LineDef,
   type LineLive,
   type LiveSnapshot,
@@ -76,6 +77,8 @@ const LIMIT_TICKS = 3;
 const LIMIT_HOLD_MS = 10 * 60_000;
 const MAX_ALARMS = 300;
 const SIM_TIMEOUT_MS = 5_000;
+/** 엣지 게이트웨이는 2초마다 상태를 낸다. 세 번 못 받으면 끊긴 것으로 본다 */
+const EDGE_TIMEOUT_MS = 6_500;
 /** 실행을 확인하기 전(첫 상태 메시지 전)에 붙잡아 둘 최대 메시지 수 */
 const MAX_HELD = 20_000;
 /** 멈춘 상태: 여기서 벗어나면 재가동으로 본다 */
@@ -140,6 +143,8 @@ export class LiveService implements OnModuleInit {
   private nowMs = 0;
   private sim: SimStatusMsg | null = null;
   private lastSimAt = 0;
+  private edge: EdgeStatusMsg | null = null;
+  private lastEdgeAt = 0;
   private stations = new Map<string, StationRt>();
   private lines = new Map<string, LineRt>();
   private amrs: Record<string, AmrMsg> = {};
@@ -162,6 +167,14 @@ export class LiveService implements OnModuleInit {
   // ───────────── 수집 ─────────────
 
   private receive(m: MqttInbound): void {
+    // 엣지 게이트웨이 상태는 시뮬레이터 실행과 무관하다 (실제 시각, 실행이 바뀌어도 이어진다)
+    if (m.parts[0] === 'edge') {
+      if (m.parts[1] === 'status') {
+        this.edge = m.payload as EdgeStatusMsg;
+        this.lastEdgeAt = Date.now();
+      }
+      return;
+    }
     if (!this.held) return this.ingest(m);
     if (m.parts[0] !== 'sim' || m.parts[1] !== 'status') {
       if (this.held.length < MAX_HELD) this.held.push(m);
@@ -422,7 +435,15 @@ export class LiveService implements OnModuleInit {
     }
     const lines: Record<string, LineLive> = {};
     for (const [code, line] of this.lines) lines[code] = this.lineLive(line, stations);
-    return { sim: this.sim, stations, lines, amrs: this.amrs, connected: { sim: Date.now() - this.lastSimAt < SIM_TIMEOUT_MS } };
+    const now = Date.now();
+    return {
+      sim: this.sim,
+      stations,
+      lines,
+      amrs: this.amrs,
+      edge: this.edge,
+      connected: { sim: now - this.lastSimAt < SIM_TIMEOUT_MS, edge: now - this.lastEdgeAt < EDGE_TIMEOUT_MS },
+    };
   }
 
   /**

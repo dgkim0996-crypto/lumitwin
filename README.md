@@ -11,6 +11,8 @@ Python 가상 PLC가 설비 데이터를 MQTT로 보내면, MES 서버가 받아
 |---|---|
 | 공장 | 3개 라인, 38대 설비. 헤드램프(사출 → 하드코팅·증착 → 조립 → 기밀·배광·EOL), 전장(SMT → AOI·ICT → 코팅 → FCT → EOL), 사이드미러(사출·도장 → 액추에이터 조립 → 기능 검사). AMR 3대가 라인 간 이송 |
 | 데이터 흐름 | SimPy 이산사건 시뮬레이터 → MQTT(`lt/v1/{line}/{station}/…`) → NestJS 내장 브로커(aedes) → 실시간 집계 → Socket.io → 3D 화면 |
+| OPC UA 경로 | 현장처럼 **가상 PLC(OPC UA 서버) → 엣지 게이트웨이 → MQTT**로도 돌릴 수 있다(`npm run dev:opcua`). 태그는 엔지니어링 단위가 붙은 변수로 구독(값이 바뀔 때만), 상태 변경·생산 실적은 사용자 정의 OPC UA 이벤트로 받는다. 엣지는 주소 공간을 탐색해 태그 목록을 스스로 찾고, MQTT가 끊기면 실적을 버퍼에 쌓았다가 다시 보내며, 실적 순번으로 빠진 기록을 센다. MQTT 직행과 같은 기록이 나오는지 테스트로 확인한다([설계 5.7](docs/DESIGN.md#57-opc-ua-경로-가상-plc--엣지-게이트웨이)) |
+| 품질·테스트 | 공장 정의·OEE·6대 로스·SPC·보기 전용·시뮬레이터·OPC UA 경로 자동 테스트(`npm test`)와 GitHub Actions CI(타입 검사·테스트·빌드) |
 | 품질 인과 | 원인 공정과 증상 공정이 다르다. 예: 전장 라인 LED 마운터 노즐 마모 → 헤드램프 라인 배광 불량. 이상 시나리오 10가지(설비 이상 9 + 불량 자재 LOT 입고 1)를 화면에서 켜고 끌 수 있다 |
 | MES | 설비·라인 OEE, FPY, X̄-R 관리도와 Cpk, 알람(고장·규격 이탈·품질·SPC), 완제품 → 부품 → 자재 LOT 계보 조회, 원격 명령(정지·재가동·고장·수리). 서버를 다시 띄워도 실시간 집계는 DB 기록에서 되살아난다([설계 5.6](docs/DESIGN.md#56-서버-재시작과-실시간-집계-복원)) |
 | MES 화면 | 생산 현황(시간대별 실적·설비별 OEE·병목 후보), 6대 로스(계획 시간이 고장·셋업·대기·속도·불량·초기 수율로 새는 구성과 개선 우선순위), SPC(관리도·Cpk·히스토그램·규칙 위반), 불량 분석(파레토·불량품과 양품의 공정값 비교·출하 유출), 추적(시리얼 계보·자재 LOT 불량률 비교·회수 범위) |
@@ -70,6 +72,28 @@ npm run sim -- --speed 60 --seed 7
 ```bash
 npm run sim -- --offline --hours 8 --scenario EM-NOZZLE-WEAR --at 1
 ```
+
+### OPC UA 경로로 돌리기 (선택)
+
+설비 신호가 가상 PLC(OPC UA 서버, `opc.tcp://127.0.0.1:4840/lumitwin/`) → 엣지 게이트웨이 → MQTT로 들어옵니다. OPC UA 라이브러리(`asyncua`)를 한 번 설치합니다.
+
+```bash
+npm run sim:setup:opcua
+```
+
+```bash
+npm run dev:opcua
+```
+
+화면 위쪽 오른쪽의 `OPC UA` 점을 누르면 데이터 경로와 엣지 게이트웨이 상태(탐색한 설비·태그 수, 받은 이벤트, 버퍼, 빠진 실적, 재연결)가 보입니다. UaExpert 같은 OPC UA 클라이언트로 4840에 붙어 주소 공간(`Objects/LumiTwin/라인/설비/Tags`)과 이벤트를 직접 볼 수도 있습니다. 엣지만 따로 띄울 때는 `npm run edge -- --opcua opc.tcp://주소:4840/ --host 브로커 --port 1883`.
+
+### 테스트
+
+```bash
+npm test
+```
+
+공장 정의(shared), MES 계산(server: OEE·6대 로스·SPC·보기 전용), 시뮬레이터(sim: 결정성·시나리오·재가동 초품·시계, OPC UA 경로)를 돕니다. `asyncua`가 없으면 OPC UA 서버를 띄우는 테스트만 건너뜁니다. 같은 검사가 GitHub Actions에서 올릴 때마다 돕니다.
 
 ### AI 현장 비서 설정 (선택)
 
@@ -133,7 +157,7 @@ bash deploy/aws/setup-ubuntu.sh lumitwin.내도메인
 | 폴더 | 기술 | 역할 |
 |---|---|---|
 | [`shared/`](shared) | TypeScript, tsup | 공장 정의(라인·설비·태그·불량 인과·시나리오)의 단일 원본. 빌드할 때 `factory.json`도 내보내 Python이 같은 정의를 읽는다 |
-| [`sim/`](sim) | Python, SimPy, paho-mqtt | 가상 PLC·엣지. 설비 상태 기계, 버퍼, 배치·터널 설비, MTBF/MTTR 고장, 품질 인과, AMR |
+| [`sim/`](sim) | Python, SimPy, paho-mqtt, asyncua(선택) | 가상 공장·PLC. 설비 상태 기계, 버퍼, 배치·터널 설비, MTBF/MTTR 고장, 품질 인과, 재가동 초품, AMR. 선택: OPC UA 서버(`opcua_plc.py`)와 엣지 게이트웨이(`edge.py`) |
 | [`server/`](server) | NestJS 12, Prisma 7, PostgreSQL, aedes, Socket.io | MQTT 수집, 실시간 OEE·SPC·알람, 일괄 기록, 추적 API, 시뮬레이터 제어 |
 | [`client/`](client) | Next.js 16, React 19, React Three Fiber, Tailwind 4, TanStack Query, zustand | 3D 공장(설비 24종 절차적 모델링), HUD, 상세 패널, 계보 창, MES 화면 5개(차트는 라이브러리 없이 SVG로 직접 그림), AI 비서 패널 |
 | [`tools/whisper/`](tools/whisper) | Python, faster-whisper | 선택: OpenAI 호환 로컬 음성 받아쓰기 서버 |
@@ -159,6 +183,7 @@ bash deploy/aws/setup-ubuntu.sh lumitwin.내도메인
 | `GET production/defects?line=` | 설비·불량 코드별 누계 (DB 기준, 파레토와 요인 분석 대상 목록) |
 | `GET production/hourly/:line` | 시간대별 생산·불량 |
 | `GET production/escapes` | 검사를 빠져나간 잠재 불량 |
+| `GET sim/status` | 시뮬레이터 상태, 데이터 경로(`link`: mqtt·opcua), OPC UA 경로면 엣지 게이트웨이 상태 |
 | `POST sim/speed` · `pause` · `resume` · `reset` · `scenario` · `station` | 시뮬레이터 원격 제어. `station`은 `{code, op: stop·setup·start·repair·fail, reason?}` (사유 40자) |
 | `GET access` | 이 접속이 보기 전용인지(`{readOnly, unlockable}`). 공개 링크(Cloudflare를 거친 요청)는 쓰기 요청이 403, 제어 키는 `x-lumitwin-key` 머리글 |
 | `GET operator/checks?station=&limit=`, `POST operator/checks` | 작업 전 점검 기록 조회(이번 실행, 최근 순)·저장(`{station, doc, items: [{text, ok}], by}`, 이상이 있으면 알람) |
@@ -171,4 +196,5 @@ bash deploy/aws/setup-ubuntu.sh lumitwin.내도메인
 
 - 고정 주소 공개 링크: Cloudflare 계정·도메인으로 이름 붙인 터널 쓰기 (스크립트는 토큰만 넣으면 됨)
 - 늘 켜 둘 링크가 필요하면 상시 서버로 옮기기 (Caddy·pm2 스크립트는 준비됨, Linux에서 아직 돌려 보지 않음)
-- OPC UA 시뮬레이터를 붙여 PLC → OPC UA → 엣지 → MQTT 경로 보이기
+- OPC UA 경로에 보안 정책(Basic256Sha256 서명·암호화, 인증서) 켜기. 지금은 로컬 시연용으로 SecurityPolicy None·익명 접속
+- 작업자 명령(정지·셋업·재가동)도 OPC UA 메서드로 PLC에 내리기. 지금은 MQTT로 시뮬레이터에 바로 간다

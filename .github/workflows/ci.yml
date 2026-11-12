@@ -29,7 +29,9 @@ jobs:
         with:
           python-version: '3.14'
           cache: pip
-          cache-dependency-path: sim/requirements.txt
+          cache-dependency-path: |
+            sim/requirements.txt
+            sim/requirements-opcua.txt
 
       # postinstall이 shared를 빌드하고(factory.json 포함) Prisma 클라이언트를 만든다
       - name: 설치
@@ -44,11 +46,12 @@ jobs:
       - name: MES 테스트 (server · OEE·SPC·보기 전용)
         run: npm run test -w server
 
-      - name: 시뮬레이터 테스트 (sim)
+      # OPC UA 경로(가상 PLC → 엣지 게이트웨이) 테스트까지 돌도록 asyncua도 설치한다
+      - name: 시뮬레이터 테스트 (sim · OPC UA 경로 포함)
         env:
           PYTHON: python
         run: |
-          npm run sim:setup
+          npm run sim:setup:opcua
           npm run test:sim -- -v
 
       - name: 빌드 (server · client)

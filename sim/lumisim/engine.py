@@ -29,7 +29,7 @@ def resync_clock(env: RealtimeEnvironment) -> None:
     env.real_start = monotonic()
 
 from . import mqtt_io as T
-from .model import defect_probability, linear, round_to
+from .model import defect_probability, iso, linear, round_to
 
 KST = timezone(timedelta(hours=9))
 
@@ -48,11 +48,6 @@ FAILURE_REASONS: dict[str, list[str]] = {
     'packer': ['라벨 프린터 용지 소진', '협동로봇 보호 정지'],
 }
 DEFAULT_REASONS = ['설비 알람', '센서 이상', '안전 인터록 작동', '통신 오류']
-
-
-def iso(dt: datetime) -> str:
-    dt = dt.astimezone(timezone.utc)
-    return dt.strftime('%Y-%m-%dT%H:%M:%S.') + f'{dt.microsecond // 1000:03d}Z'
 
 
 class Item:
@@ -747,6 +742,7 @@ class Sim:
             'startedAt': iso(self.start_dt),
             'speed': self.speed,
             'running': self.running,
+            'link': getattr(self.io, 'link', 'mqtt'),
             'scenarios': [
                 {'id': sid, 'startedAt': self.iso_at(t0), 'level': round(self.scen.progress(sid), 3)}
                 for sid, t0 in self.scen.active.items()
