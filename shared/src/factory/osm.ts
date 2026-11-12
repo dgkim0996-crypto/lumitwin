@@ -1,5 +1,5 @@
 import type { LineDef } from '../types';
-import { attr, ct, cy, defect, meas } from './build';
+import { attr, ct, cy, defect, meas, warmup } from './build';
 
 /**
  * C베이 — 전동 폴딩 사이드미러 라인
@@ -36,6 +36,7 @@ export const OSM: LineDef = {
   stations: [
     {
       code: 'OSM-IM-C1', name: '커버 사출기 (ASA, 좌/우 2캐비티)', kind: 'injection', step: 'COVER_MOLD', pos: [-47, 32], cycle: 90, cycleCv: 0.01, batch: 2, mtbf: 600, mttr: 25, grade: 'confirmed',
+      warmup: warmup('GLOSS'),
       desc: '좌·우 커버를 한 금형에서 함께 뽑는다. 고광택 외관이라 금형온도를 60~90 °C로 높게 쓴다.',
       tags: [
         ct('dryer_dew', '건조기 이슬점', '°C', -40, 1.2, 'assumed', { usl: -25, tau: 240, digits: 1 }),
@@ -68,6 +69,7 @@ export const OSM: LineDef = {
     },
     {
       code: 'OSM-IM-B1', name: '브래킷 사출기 (PA6-GF30)', kind: 'injection', step: 'BRKT_MOLD', pos: [-47, 20], cycle: 50, cycleCv: 0.01, mtbf: 600, mttr: 25, grade: 'confirmed',
+      warmup: warmup('WARP'),
       desc: '유리섬유 강화 나일론으로 미러 브래킷·액추에이터 하우징을 사출한다. 금형온도가 낮으면 결정화가 덜 돼 휜다.',
       tags: [
         ct('melt_temp', '용융 온도', '°C', 270, 1.2, 'confirmed', { lsl: 250, usl: 290, idle: 270, tau: 120, digits: 1, note: 'BASF Ultramid B3U30G6: 250~290 °C' }),

@@ -2,7 +2,7 @@
 
 import { useMutation } from '@tanstack/react-query';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { AccessBadge } from '@/components/hud/AccessBadge';
 import { NavTabs } from '@/components/nav/NavTabs';
 import { FACTORY, LINES, SIM_SPEEDS, type SimCommand } from '@lumitwin/shared';
@@ -21,8 +21,8 @@ function Dot({ on, label }: { on: boolean; label: string }) {
   return (
     <span className="flex items-center gap-1.5 text-xs text-sub" title={label}>
       <span className={cx('size-2 rounded-full', on ? 'bg-run' : 'bg-down blink')} />
-      {/* 좁은 화면(xl 미만)에서는 점만 보이고 글자는 화면 읽기 프로그램용으로 남긴다 */}
-      <span className="sr-only xl:not-sr-only">{label}</span>
+      {/* 2xl 미만에서는 점만 보이고 글자는 화면 읽기 프로그램용으로 남긴다 */}
+      <span className="sr-only 2xl:not-sr-only">{label}</span>
     </span>
   );
 }
@@ -44,9 +44,9 @@ function ScenarioMenu() {
     <div className="relative" ref={box}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className={cx('h-8 rounded-md border px-2 text-sm xl:px-3', active.size ? 'border-warn/60 bg-warn/15 text-warn' : 'border-line bg-white/5 hover:bg-white/10')}
+        className={cx('h-8 rounded-md border px-1.5 text-sm xl:px-3', active.size ? 'border-warn/60 bg-warn/15 text-warn' : 'border-line bg-white/5 hover:bg-white/10')}
       >
-        <span className="hidden xl:inline">이상 </span>시나리오{active.size ? ` · ${active.size}개` : ''}
+        <span className="hidden 2xl:inline">이상 </span>시나리오{active.size ? ` · ${active.size}개` : ''}
       </button>
       {open && (
         <div className="panel scroll-thin absolute right-0 top-10 z-50 max-h-[70vh] w-[440px] overflow-y-auto p-3">
@@ -94,6 +94,90 @@ function ScenarioMenu() {
   );
 }
 
+const n = (v: number | undefined) => (v ?? 0).toLocaleString('ko-KR');
+
+/** 데이터 경로: 설비 신호가 MES까지 오는 길과, OPC UA 경로일 때 엣지 게이트웨이 상태 */
+function LinkStatus() {
+  const [open, setOpen] = useState(false);
+  const sim = useLive((s) => s.sim);
+  const simConnected = useLive((s) => s.simConnected);
+  const edge = useLive((s) => s.edge);
+  const edgeConnected = useLive((s) => s.edgeConnected);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+  const opcua = sim?.link === 'opcua';
+  const gateway = opcua && edgeConnected && edge ? edge : null;
+  const on = simConnected && (!opcua || (gateway?.opcua === 'connected' && gateway.mqtt));
+  const steps = opcua ? ['가상 PLC', 'OPC UA', '엣지 게이트웨이', 'MQTT', 'MES'] : ['시뮬레이터', 'MQTT', 'MES'];
+  const rows: [string, ReactNode][] = gateway
+    ? [
+        ['OPC UA', gateway.opcua === 'connected' ? <span className="text-run">연결됨</span> : <span className="text-warn">연결 중</span>],
+        ['MQTT', gateway.mqtt ? <span className="text-run">연결됨</span> : <span className="text-down">끊김 · 기록은 버퍼에 쌓는 중</span>],
+        ['탐색한 주소 공간', `설비 ${n(gateway.stations)} · 태그 ${n(gateway.tags)}`],
+        ['받은 이벤트', `상태 변경 ${n(gateway.received.state)} · 생산 실적 ${n(gateway.received.unit)}`],
+        ['태그 값 알림', `${n(gateway.received.value)} (값이 바뀔 때만)`],
+        ['버퍼 (MQTT 끊긴 동안)', `${n(gateway.buffered)}건${gateway.dropped ? ` · 넘쳐서 버림 ${n(gateway.dropped)}` : ''}`],
+        ['빠진 실적 (순번 건너뜀)', gateway.gaps ? <span className="text-down">{n(gateway.gaps)}건</span> : '없음'],
+        ['재연결', `${n(gateway.reconnects)}회`],
+      ]
+    : [];
+  return (
+    <div className="relative" ref={box}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        title="데이터 경로"
+        className="flex items-center gap-1.5 rounded px-1 text-xs text-sub hover:bg-white/10"
+      >
+        <span className={cx('size-2 rounded-full', on ? 'bg-run' : 'bg-down blink')} />
+        <span className="sr-only 2xl:not-sr-only">{opcua ? 'OPC UA' : '엣지'}</span>
+      </button>
+      {open && (
+        // 머리줄의 whitespace-nowrap이 물려 내려오므로 여기서 줄바꿈을 되살린다
+        <div className="panel absolute right-0 top-9 z-50 w-[380px] whitespace-normal p-3 text-xs">
+          <div className="mb-2 text-sm font-semibold">데이터 경로</div>
+          <div className="mb-3 flex flex-wrap items-center gap-1">
+            {steps.map((s, i) => (
+              <span key={s} className="flex items-center gap-1">
+                {i > 0 && <span className="text-dim">→</span>}
+                <span className={cx('rounded border px-1.5 py-0.5', s === 'OPC UA' || s === '엣지 게이트웨이' ? 'border-info/50 bg-info/10 text-info' : 'border-line bg-white/5')}>{s}</span>
+              </span>
+            ))}
+          </div>
+          {!simConnected && <p className="mb-2 text-down">시뮬레이터 상태가 오지 않습니다.</p>}
+          {opcua ? (
+            gateway ? (
+              <>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                  {rows.map(([k, v]) => (
+                    <div key={k} className="contents">
+                      <dt className="text-dim">{k}</dt>
+                      <dd className="num">{v}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <p className="mt-2 leading-relaxed text-dim">
+                  태그는 OPC UA 구독으로, 상태 변경·생산 실적은 OPC UA 이벤트로 받아 MQTT로 옮깁니다. AMR·시뮬레이터 상태는 MQTT로 바로 옵니다.
+                </p>
+              </>
+            ) : (
+              <p className="text-down">엣지 게이트웨이가 응답하지 않습니다. 설비 신호가 MES로 오지 않습니다 (npm run edge).</p>
+            )
+          ) : (
+            <p className="leading-relaxed text-sub">
+              시뮬레이터가 설비 신호를 MQTT 브로커로 바로 보냅니다. <span className="num">npm run dev:opcua</span>로 띄우면 가상 PLC(OPC UA 서버)와 엣지 게이트웨이를 거쳐 들어옵니다.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** AI 현장 비서 열기·닫기 (Ctrl+/) */
 function AssistantButton() {
   const open = useUi((s) => s.assistantOpen);
@@ -103,14 +187,14 @@ function AssistantButton() {
     <button
       onClick={() => setOpen(!open)}
       title="AI 현장 비서 (Ctrl+/)"
-      className={cx('flex h-8 items-center gap-1.5 rounded-md border px-2 text-sm xl:px-3', open ? 'border-info/60 bg-info/20 text-info' : 'border-line bg-white/5 hover:bg-white/10')}
+      className={cx('flex h-8 items-center gap-1.5 rounded-md border px-1.5 text-sm xl:px-3', open ? 'border-info/60 bg-info/20 text-info' : 'border-line bg-white/5 hover:bg-white/10')}
     >
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
         <path d="M4 5h16v11H9l-5 4V5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
         <path d="M9 10.5h.01M12 10.5h.01M15 10.5h.01" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
       </svg>
       <span>
-        <span className="hidden xl:inline">AI </span>비서
+        <span className="hidden 2xl:inline">AI </span>비서
       </span>
       {busy && <span className="size-1.5 animate-pulse rounded-full bg-info" />}
     </button>
@@ -135,7 +219,8 @@ export function TopBar() {
 
   return (
     // .panel의 backdrop-filter가 쌓임 맥락을 만들므로, 드롭다운이 아래 패널 위로 오도록 헤더 자체를 올린다
-    // 1024px 폭에서도 한 줄에 들어가도록 xl 미만에서는 간격·버튼 폭·글자를 줄인다
+    // 1024px 폭에서도 한 줄에 들어가도록 xl 미만에서는 간격·버튼 폭·글자를 줄이고,
+    // 버튼 앞 글자·연결 점 글자·넓은 배속 버튼은 2xl(1536px), 경과 시간은 1680px부터 보인다 (1280~1536px에서 넘치던 것)
     <header className="panel pointer-events-auto relative z-30 flex h-12 shrink-0 items-center gap-2 px-3 xl:gap-4 xl:px-4">
       <button onClick={home} className="flex shrink-0 items-center gap-2" title={`${FACTORY.site} · 가상 램프·전장 공장 — 공장 전체 보기`}>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -150,7 +235,7 @@ export function TopBar() {
 
       <div className="flex shrink-0 items-baseline gap-2 whitespace-nowrap">
         <span className="num text-lg font-semibold">{kst(sim?.t)}</span>
-        <span className="hidden text-xs text-dim xl:inline">가상 시각 · 경과 {duration(elapsed)}</span>
+        <span className="hidden text-xs text-dim min-[1680px]:inline">가상 시각 · 경과 {duration(elapsed)}</span>
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap">
@@ -161,7 +246,7 @@ export function TopBar() {
               disabled={!simConnected || send.isPending || readOnly}
               title={lock}
               onClick={() => send.mutate({ action: 'speed', speed: v })}
-              className={cx('num h-8 w-8 text-sm xl:w-11', sim?.speed === v ? 'bg-info/25 text-info' : 'hover:bg-white/10', (!simConnected || readOnly) && 'opacity-40')}
+              className={cx('num h-8 w-8 text-sm 2xl:w-11', sim?.speed === v ? 'bg-info/25 text-info' : 'hover:bg-white/10', (!simConnected || readOnly) && 'opacity-40')}
             >
               {v}×
             </button>
@@ -188,7 +273,7 @@ export function TopBar() {
         <AssistantButton />
         <div className="ml-1 flex items-center gap-2 border-l border-line pl-2 xl:ml-2 xl:gap-3 xl:pl-3">
           <Dot on={socket} label="MES" />
-          <Dot on={simConnected} label="엣지" />
+          <LinkStatus />
         </div>
       </div>
     </header>

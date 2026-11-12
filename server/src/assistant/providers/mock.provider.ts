@@ -143,6 +143,11 @@ export class MockProvider implements AssistantProvider {
       const out = await call('lot_quality', { material: e.material });
       return out.ok ? lotQualityText(out.data) : out.summary;
     }
+    // "OEE가 왜 낮아?"는 불량 원인보다 시간 손실 질문이라 요인 비교 전에 본다
+    if (/로스|손실|loss/i.test(m) || (/oee/i.test(m) && /왜|낮|원인|줄이|개선|어디/.test(m))) {
+      const out = await call('six_losses', { line: e.line });
+      return out.ok ? lossText(out.data) : out.summary;
+    }
     if (wantsDown && wantsHow) {
       const ov = await call('factory_overview');
       const down = (ov.data as Any).stopped.filter((x: Any) => x.state === '고장');
@@ -340,6 +345,20 @@ function paretoText(d: Any, line?: string): string {
   if (!top.length) return '이번 실행에는 아직 불량 기록이 없습니다.';
   const scope = line ? `${LINES.find((l) => l.code === line)?.name} ` : '';
   return `${scope}불량은 모두 ${n0(d.totalNg)}건이고, 많은 순서는 다음과 같습니다.\n\n| 설비 | 불량 | 건수 | 비중 |\n|---|---|---|---|\n${top.slice(0, 6).map((r) => `| ${r.station} ${r.stationName} | ${r.defectName} | ${r.n} | ${r.sharePct}% |`).join('\n')}\n\n원인을 보려면 "${top[0].station} ${top[0].defectName} 원인이 뭐야?"처럼 물어보세요.`;
+}
+
+function lossText(d: Any): string {
+  const ranked = (Object.entries(d.lossPct ?? {}) as [string, number][]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  if (!d.plannedMin || !ranked.length) return '아직 집계된 시간이 없어 로스를 나눌 수 없습니다. 시뮬레이터가 조금 돈 뒤 다시 물어봐 주세요.';
+  const top = ((d.topStationLosses ?? []) as Any[]).slice(0, 5);
+  const table = `| 로스 | 계획 시간 대비 |\n|---|---|\n${ranked.map(([k, v]) => `| ${k} | ${v}% |`).join('\n')}`;
+  const list = top.map((x, i) => `${i + 1}. ${x.station} ${x.stationName} · ${x.loss} ${x.minutes}분 (그 설비 계획 시간의 ${x.ofStationPct}%)`).join('\n');
+  const waiting = ((d.topWaiting ?? []) as Any[]).map((x) => `${x.station} ${x.minutes}분`).join(', ');
+  const hint =
+    ranked[0][0] === '순간 정지·공회전'
+      ? `\n\n순간 정지·공회전(${waiting})은 대개 앞 설비가 멈추거나 느려 부품이 안 와서 생깁니다. 그 설비에서 줄일 수 있는 로스는 아래 순위를 보세요.`
+      : '';
+  return `${d.scope} OEE는 ${d.oeePct}%입니다. 계획 시간 ${n0(d.plannedMin)}분(설비 시간 합) 중 가장 큰 로스는 ${ranked[0][0]} ${ranked[0][1]}%입니다.${hint}\n\n${table}\n\n줄일 곳 (그 설비에서 직접 줄일 수 있는 로스, 잃은 시간 큰 순)\n${list || '아직 없음'}\n\n자세한 구성은 6대 로스 화면(/losses)에서 볼 수 있습니다.`;
 }
 
 function factorsText(d: Any): string {

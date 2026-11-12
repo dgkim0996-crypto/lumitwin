@@ -33,6 +33,8 @@ T_EVENT = f'{ROOT}/sim/event'
 class MqttIO:
     """paho-mqtt 래퍼. 연결이 끊기면 저절로 다시 붙고, 그동안 보내는 메시지는 버린다(실시간 값이라 늦게 보내도 쓸모없다)."""
 
+    link = 'mqtt'  # 설비 신호가 브로커로 바로 간다 (opcua_plc.PlcIO 는 'opcua')
+
     def __init__(self, host: str, port: int, client_id: str = 'lumisim'):
         self.host, self.port = host, port
         self.cmds: queue.Queue = queue.Queue()

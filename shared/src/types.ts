@@ -126,6 +126,23 @@ export interface DetectDef {
   prob: number;
 }
 
+/**
+ * 재가동 초품: 오래 멈췄다 다시 돌리면 처음 몇 사이클은 금형·실린더 온도와 재료가 안정되지 않아 불량이 잘 난다
+ * (사출의 퍼지·시사출). 6대 로스의 초기 수율 로스가 여기서 나온다
+ */
+export interface WarmupDef {
+  /** 이만큼(분, 가상 시계) 넘게 멈췄다 다시 돌 때만 */
+  minHalt: number;
+  /** 불안정한 사이클 수 */
+  shots: number;
+  /** 그 사이클에서 부품 하나가 불량일 확률 */
+  prob: number;
+  /** 불량 코드 (이 설비 defects 중 하나) */
+  defect: string;
+  grade: SourceGrade;
+  note?: string;
+}
+
 export interface StationDef {
   code: string;
   name: string;
@@ -150,6 +167,7 @@ export interface StationDef {
   measures?: MeasureDef[];
   defects?: DefectDef[];
   detects?: DetectDef[];
+  warmup?: WarmupDef;
   grade: SourceGrade;
   desc: string;
   note?: string;

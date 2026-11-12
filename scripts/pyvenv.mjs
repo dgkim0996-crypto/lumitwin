@@ -19,14 +19,14 @@ function run(tag, dir, cmd, args) {
   }
 }
 
-/** dir/.venv를 만들고(없을 때만) dir/requirements.txt를 설치한다 */
-export function setupVenv(tag, dir) {
+/** dir/.venv를 만들고(없을 때만) dir/requirements.txt(또는 reqFile)를 설치한다 */
+export function setupVenv(tag, dir, reqFile = 'requirements.txt') {
   const py = venvPython(dir);
   if (!existsSync(py)) {
     process.stdout.write(`[${tag}] 가상환경(${relative(root, dir).replaceAll('\\', '/')}/.venv)을 만듭니다\n`);
     run(tag, dir, systemPython, ['-m', 'venv', '.venv']);
   }
-  run(tag, dir, py, ['-m', 'pip', 'install', '--disable-pip-version-check', '-q', '-r', 'requirements.txt']);
+  run(tag, dir, py, ['-m', 'pip', 'install', '--disable-pip-version-check', '-q', '-r', reqFile]);
   process.stdout.write(`[${tag}] 준비 완료\n`);
 }
 

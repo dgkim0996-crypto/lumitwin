@@ -16,6 +16,8 @@
     "db": "node scripts/local-db.mjs",
     "sim": "node scripts/sim.mjs",
     "sim:setup": "node scripts/sim.mjs --setup",
+    "sim:setup:opcua": "node scripts/sim.mjs --setup-opcua",
+    "edge": "node scripts/sim.mjs --edge",
     "whisper": "node scripts/whisper.mjs",
     "whisper:setup": "node scripts/whisper.mjs --setup",
     "dev": "concurrently -k -n db,shared,server,client,sim -c gray,yellow,blue,magenta,green \"npm:db\" \"npm:dev:shared\" \"npm:dev:server\" \"npm:dev:client\" \"npm:dev:sim\"",
@@ -23,6 +25,9 @@
     "dev:server": "wait-on tcp:54332 shared/dist/index.js && npm run db:prepare -w server && npm run dev -w server",
     "dev:client": "wait-on shared/dist/index.mjs tcp:8790 && npm run dev -w client",
     "dev:sim": "wait-on tcp:1884 shared/dist/factory.json && node scripts/sim.mjs",
+    "dev:opcua": "concurrently -k -n db,shared,server,client,plc,edge -c gray,yellow,blue,magenta,green,cyan \"npm:db\" \"npm:dev:shared\" \"npm:dev:server\" \"npm:dev:client\" \"npm:dev:plc\" \"npm:dev:edge\"",
+    "dev:plc": "wait-on tcp:1884 shared/dist/factory.json && node scripts/sim.mjs --link opcua",
+    "dev:edge": "wait-on tcp:1884 tcp:4840 && node scripts/sim.mjs --edge",
     "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
     "start": "concurrently -k -n db,server,client,sim -c gray,blue,magenta,green \"npm:db\" \"npm:start:server\" \"npm:start:client\" \"npm:start:sim\"",
     "start:server": "wait-on tcp:54332 && npm run db:prepare -w server && npm run start -w server",
@@ -31,7 +36,10 @@
     "tunnel": "node scripts/tunnel.mjs",
     "share": "concurrently -k -n db,server,client,sim,tunnel -c gray,blue,magenta,green,cyan \"npm:db\" \"npm:start:server\" \"npm:start:client\" \"npm:start:sim\" \"npm:tunnel\"",
     "db:migrate": "npm run db:prepare -w server",
-    "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w client"
+    "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w client",
+    "test": "npm run test -w shared && npm run test -w server && npm run test:sim",
+    "test:sim": "node scripts/sim.mjs --test",
+    "screenshots": "node scripts/screenshots.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

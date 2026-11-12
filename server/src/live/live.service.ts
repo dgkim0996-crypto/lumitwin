@@ -4,12 +4,15 @@ import {
   DEFECT_NAMES,
   LINES,
   SPC_RULES,
+  STARTUP_WINDOW_SEC,
   STATIONS,
   type AlarmLive,
   type AmrMsg,
+  type EdgeStatusMsg,
   type LineDef,
   type LineLive,
   type LiveSnapshot,
+  type LossReport,
   type Oee,
   type SimEventMsg,
   type SimStatusMsg,
@@ -17,6 +20,7 @@ import {
   type StateMsg,
   type StationDef,
   type StationLive,
+  type StationLoss,
   type StationState,
   type TagsMsg,
   type TickPayload,
@@ -24,6 +28,8 @@ import {
   SPC_SUBGROUP,
 } from '@lumitwin/shared';
 import { MqttBrokerService, type MqttInbound } from '../mqtt/mqtt-broker.service';
+import { roundLosses, stationLosses, sumLosses } from './losses';
+import { r3, stationOee, type StateTimes } from './oee';
 import { buildSeries, SPC_KEEP_POINTS, type SpcSeries } from './spc';
 
 type Station = StationDef & { line: LineDef['code'] };
@@ -47,6 +53,10 @@ interface StationRt {
   spc: Map<string, SpcSeries>;
   /** 직전 가공의 시작 시각 ms (배치 판별) */
   lastStartMs: number;
+  /** 마지막으로 고장·셋업·정지에서 다시 돌기 시작한 가상 시각 (ms). 초기 수율 로스 판정 */
+  restartMs: number;
+  /** 재가동 직후(STARTUP_WINDOW_SEC 안) 나온 불량 수 */
+  startupNg: number;
 }
 
 interface LineRt {
@@ -67,8 +77,12 @@ const LIMIT_TICKS = 3;
 const LIMIT_HOLD_MS = 10 * 60_000;
 const MAX_ALARMS = 300;
 const SIM_TIMEOUT_MS = 5_000;
+/** 엣지 게이트웨이는 2초마다 상태를 낸다. 세 번 못 받으면 끊긴 것으로 본다 */
+const EDGE_TIMEOUT_MS = 6_500;
 /** 실행을 확인하기 전(첫 상태 메시지 전)에 붙잡아 둘 최대 메시지 수 */
 const MAX_HELD = 20_000;
+/** 멈춘 상태: 여기서 벗어나면 재가동으로 본다 */
+const HALTED = new Set<StationState>(['DOWN', 'SETUP', 'STOP']);
 
 export interface LiveEvents {
   run: [startedAt: string];
@@ -114,7 +128,6 @@ export interface LiveHydration {
   limitAlarms: { station: string; title: string }[];
 }
 
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const limitTitle = (rt: StationRt, tagName: string) => `${rt.def.name} · ${tagName} 규격 이탈`;
 
 /**
@@ -130,6 +143,8 @@ export class LiveService implements OnModuleInit {
   private nowMs = 0;
   private sim: SimStatusMsg | null = null;
   private lastSimAt = 0;
+  private edge: EdgeStatusMsg | null = null;
+  private lastEdgeAt = 0;
   private stations = new Map<string, StationRt>();
   private lines = new Map<string, LineRt>();
   private amrs: Record<string, AmrMsg> = {};
@@ -152,6 +167,14 @@ export class LiveService implements OnModuleInit {
   // ───────────── 수집 ─────────────
 
   private receive(m: MqttInbound): void {
+    // 엣지 게이트웨이 상태는 시뮬레이터 실행과 무관하다 (실제 시각, 실행이 바뀌어도 이어진다)
+    if (m.parts[0] === 'edge') {
+      if (m.parts[1] === 'status') {
+        this.edge = m.payload as EdgeStatusMsg;
+        this.lastEdgeAt = Date.now();
+      }
+      return;
+    }
     if (!this.held) return this.ingest(m);
     if (m.parts[0] !== 'sim' || m.parts[1] !== 'status') {
       if (this.held.length < MAX_HELD) this.held.push(m);
@@ -237,6 +260,7 @@ export class LiveService implements OnModuleInit {
     const prev = live.state;
     live.stateSec[prev] = (live.stateSec[prev] ?? 0) + Math.max(0, ms - rt.sinceMs) / 1000;
     if (prev === 'DOWN') rt.upAtMs = ms;
+    if (HALTED.has(prev) && !HALTED.has(state)) rt.restartMs = ms;
     live.state = state;
     live.reason = reason;
     live.since = t;
@@ -275,6 +299,8 @@ export class LiveService implements OnModuleInit {
     if (ng) {
       live.ng++;
       if (msg.defect) live.defects[msg.defect] = (live.defects[msg.defect] ?? 0) + 1;
+      const sinceRestart = Date.parse(msg.t) - rt.restartMs;
+      if (sinceRestart >= 0 && sinceRestart <= STARTUP_WINDOW_SEC * 1000) rt.startupNg++;
     } else {
       live.ok++;
     }
@@ -373,22 +399,9 @@ export class LiveService implements OnModuleInit {
     return times;
   }
 
-  /**
-   * OEE = 가동률 × 성능 × 양품률
-   * - 가동률 = 가동 가능 시간(가동·투입 대기·배출 대기) ÷ 계획 시간(전체 − 계획 정지)
-   * - 성능 = 이상 사이클 × 처리 수 ÷ 가동 가능 시간 (투입·배출 대기는 성능 손실로 잡힌다)
-   * - 양품률 = 양품 ÷ 처리 수
-   */
-  private stationOee(rt: StationRt, times: Partial<Record<StationState, number>>): Oee {
-    const sum = (ks: StationState[]) => ks.reduce((a, k) => a + (times[k] ?? 0), 0);
-    const total = sum(['RUN', 'IDLE', 'BLOCKED', 'DOWN', 'SETUP', 'STOP']);
-    const planned = total - (times.STOP ?? 0);
-    const operating = sum(['RUN', 'IDLE', 'BLOCKED']);
-    const count = rt.live.ok + rt.live.ng;
-    const availability = planned > 0 ? operating / planned : 1;
-    const performance = rt.utility ? 1 : operating > 0 ? Math.min(1, (rt.idealSec * count) / operating) : 0;
-    const quality = count > 0 ? rt.live.ok / count : 1;
-    return { availability: r3(availability), performance: r3(performance), quality: r3(quality), oee: r3(availability * performance * quality) };
+  /** OEE 계산식은 oee.ts (테스트가 같은 함수를 확인한다) */
+  private stationOee(rt: StationRt, times: StateTimes): Oee {
+    return stationOee(times, { ok: rt.live.ok, ng: rt.live.ng, idealSec: rt.idealSec, utility: rt.utility });
   }
 
   private lineLive(line: LineRt, stations: Record<string, StationLive>): LineLive {
@@ -422,7 +435,35 @@ export class LiveService implements OnModuleInit {
     }
     const lines: Record<string, LineLive> = {};
     for (const [code, line] of this.lines) lines[code] = this.lineLive(line, stations);
-    return { sim: this.sim, stations, lines, amrs: this.amrs, connected: { sim: Date.now() - this.lastSimAt < SIM_TIMEOUT_MS } };
+    const now = Date.now();
+    return {
+      sim: this.sim,
+      stations,
+      lines,
+      amrs: this.amrs,
+      edge: this.edge,
+      connected: { sim: now - this.lastSimAt < SIM_TIMEOUT_MS, edge: now - this.lastEdgeAt < EDGE_TIMEOUT_MS },
+    };
+  }
+
+  /**
+   * 6대 로스: 설비별 시간 구성과 라인·공장 합계 (계산식은 losses.ts).
+   * 초기 수율 로스는 메모리에서만 센다: 서버를 다시 띄우면 그 뒤 재가동부터 다시 센다 (그 전 불량은 공정 불량으로 들어간다)
+   */
+  losses(): LossReport {
+    const stations: StationLoss[] = [];
+    for (const rt of this.stations.values()) {
+      const { ok, ng } = rt.live;
+      const lt = stationLosses(this.stationTimes(rt), { ok, ng, startupNg: rt.startupNg, idealSec: rt.idealSec, utility: rt.utility });
+      stations.push({ station: rt.def.code, line: rt.def.line, ok, ng, startupNg: rt.startupNg, ...lt });
+    }
+    return {
+      t: this.virtualNow,
+      startupWindowSec: STARTUP_WINDOW_SEC,
+      total: roundLosses(sumLosses(stations)),
+      lines: LINES.map((l) => ({ line: l.code, ...roundLosses(sumLosses(stations.filter((s) => s.line === l.code))) })),
+      stations: stations.map(roundLosses),
+    };
   }
 
   snapshot(): LiveSnapshot {
@@ -580,6 +621,7 @@ export class LiveService implements OnModuleInit {
         return [def.code, {
           def, live, sinceMs: NaN, idealSec, utility, window: [], qualityOn: false,
           limitRun: new Map(), limitOn: new Set(), upAtMs: 0, spc: buildSeries(def), lastStartMs: NaN,
+          restartMs: -Infinity, startupNg: 0,
         } satisfies StationRt];
       }),
     );

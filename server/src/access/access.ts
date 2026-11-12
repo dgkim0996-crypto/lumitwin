@@ -10,13 +10,17 @@ import { CONTROL_KEY_HEADER, type AccessInfo } from '@lumitwin/shared';
  * READ_ONLY=off: 끔
  * CONTROL_KEY를 정해 두면 그 키를 넣은 화면은 보기 전용이어도 조작할 수 있다 (면접장 태블릿 시연 등)
  */
-type Mode = 'tunnel' | 'all' | 'off';
+export type ReadOnlyMode = 'tunnel' | 'all' | 'off';
 
-const mode: Mode = ((): Mode => {
-  const v = (process.env.READ_ONLY ?? 'tunnel').trim().toLowerCase();
-  return v === 'all' || v === 'off' ? v : 'tunnel';
-})();
-const controlKey = (process.env.CONTROL_KEY ?? '').trim();
+export interface AccessConfig {
+  mode: ReadOnlyMode;
+  controlKey: string;
+}
+
+export function accessConfigFromEnv(env: NodeJS.ProcessEnv = process.env): AccessConfig {
+  const v = (env.READ_ONLY ?? 'tunnel').trim().toLowerCase();
+  return { mode: v === 'all' || v === 'off' ? v : 'tunnel', controlKey: (env.CONTROL_KEY ?? '').trim() };
+}
 
 /** 보기 전용이어도 받는 쓰기 요청: AI 비서 질문과 음성 받아쓰기 (공장 상태를 바꾸지 않는다) */
 const ALLOWED_WRITES = new Set(['/api/v1/assistant/chat', '/api/v1/assistant/transcribe']);
@@ -27,7 +31,7 @@ function viaCloudflare(req: Request): boolean {
   return typeof req.headers['cf-ray'] === 'string';
 }
 
-function keyMatches(req: Request): boolean {
+function keyMatches(req: Request, controlKey: string): boolean {
   if (!controlKey) return false;
   const got = req.headers[CONTROL_KEY_HEADER];
   if (typeof got !== 'string' || !got) return false;
@@ -36,9 +40,29 @@ function keyMatches(req: Request): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/** 설정 하나로 판정 함수와 Express 미들웨어를 만든다 (테스트는 설정을 바꿔 가며 만든다) */
+export function createAccess({ mode, controlKey }: AccessConfig) {
+  const accessOf = (req: Request): AccessInfo => {
+    const guarded = mode === 'all' || (mode === 'tunnel' && viaCloudflare(req));
+    return { readOnly: guarded && !keyMatches(req, controlKey), unlockable: guarded && !!controlKey };
+  };
+  /** 보기 전용인 접속의 쓰기 요청을 403으로 막는다 (main.ts에서 라우터보다 먼저 건다) */
+  const guard = (req: Request, res: Response, next: NextFunction) => {
+    if (mode === 'off' || SAFE_METHODS.has(req.method) || !req.path.startsWith('/api/v1/') || ALLOWED_WRITES.has(req.path)) return next();
+    if (!accessOf(req).readOnly) return next();
+    res.status(403).json({
+      statusCode: 403,
+      message: '공개 링크는 보기 전용입니다. 설비 조작·시나리오·초기화는 시연자 화면에서만 할 수 있습니다',
+    });
+  };
+  return { mode, controlKey, accessOf, guard };
+}
+
+/** 서버가 쓰는 판정 (server/.env의 READ_ONLY·CONTROL_KEY) */
+const access = createAccess(accessConfigFromEnv());
+
 export function accessOf(req: Request): AccessInfo {
-  const guarded = mode === 'all' || (mode === 'tunnel' && viaCloudflare(req));
-  return { readOnly: guarded && !keyMatches(req), unlockable: guarded && !!controlKey };
+  return access.accessOf(req);
 }
 
 /**
@@ -51,19 +75,11 @@ export function clientIp(req: Request): string {
   return req.ip ?? 'local';
 }
 
-/** 보기 전용인 접속의 쓰기 요청을 403으로 막는다 (main.ts에서 라우터보다 먼저 건다) */
 export function readOnlyGuard() {
-  if (mode !== 'off') {
+  if (access.mode !== 'off') {
     new Logger('Access').log(
-      `보기 전용: ${mode === 'all' ? '모든 접속' : 'Cloudflare 공개 링크로 들어온 접속'}${controlKey ? ' · 제어 키를 넣으면 조작 가능' : ''}`,
+      `보기 전용: ${access.mode === 'all' ? '모든 접속' : 'Cloudflare 공개 링크로 들어온 접속'}${access.controlKey ? ' · 제어 키를 넣으면 조작 가능' : ''}`,
     );
   }
-  return (req: Request, res: Response, next: NextFunction) => {
-    if (mode === 'off' || SAFE_METHODS.has(req.method) || !req.path.startsWith('/api/v1/') || ALLOWED_WRITES.has(req.path)) return next();
-    if (!accessOf(req).readOnly) return next();
-    res.status(403).json({
-      statusCode: 403,
-      message: '공개 링크는 보기 전용입니다. 설비 조작·시나리오·초기화는 시연자 화면에서만 할 수 있습니다',
-    });
-  };
+  return access.guard;
 }

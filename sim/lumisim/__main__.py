@@ -3,6 +3,8 @@
   python -m lumisim --speed 20              배속 지정
   python -m lumisim --offline --hours 8     브로커 없이 최대 속도로 8시간(가상) 돌리고 공정별 통계를 출력 (보정용)
   python -m lumisim --offline --hours 6 --scenario HL-MOLD-COOL --at 1
+  python -m lumisim --link opcua            설비 신호를 가상 PLC(OPC UA 서버, 4840)로 내고 MQTT로는 AMR·상태만 보낸다
+                                            (설비 신호는 엣지 게이트웨이 `python -m lumisim.edge` 가 MQTT로 옮긴다)
 """
 from __future__ import annotations
 
@@ -50,11 +52,33 @@ def resync_if_behind(sim) -> None:
         print(f'[sim] 실제 시간보다 {lag:.0f}초 밀려 가상 시계를 다시 맞춤 (밀린 구간은 건너뜀)', flush=True)
 
 
+def start_plc(factory: dict, mqtt_io, endpoint: str):
+    try:
+        from .opcua_plc import PlcIO, PlcServer
+    except ImportError:
+        mqtt_io.close()
+        raise SystemExit('[sim] asyncua가 없습니다. 먼저 `npm run sim:setup:opcua` 를 실행하세요.')
+    import logging
+
+    # asyncua는 보안 정책 없는 엔드포인트를 열 때 경고를 남긴다. 로컬 시연용으로 알고 쓰는 설정이라 오류만 보인다
+    logging.basicConfig(level=logging.ERROR, format='[plc] %(name)s: %(message)s')
+    plc = PlcServer(factory, endpoint)
+    try:
+        plc.start()
+    except Exception as e:
+        mqtt_io.close()
+        raise SystemExit(f'[sim] OPC UA 서버를 열지 못했습니다 ({endpoint}): {e}')
+    print(f'[sim] 가상 PLC(OPC UA) 열림 · {endpoint} · 설비 신호는 엣지 게이트웨이가 MQTT로 옮긴다', flush=True)
+    return PlcIO(mqtt_io, plc)
+
+
 def run_live(args) -> None:
     from .mqtt_io import MqttIO
 
     factory = load_factory(args.factory)
     io = MqttIO(args.host, args.port)
+    if args.link == 'opcua':
+        io = start_plc(factory, io, args.opcua)
     sim = Sim(factory, io, speed=args.speed, seed=args.seed)
     n = sum(len(ln['stations']) for ln in factory['lines'])
     print(f'[sim] 가상 공장 시작 · 라인 {len(factory["lines"])} · 설비 {n} · AMR {len(sim.amrs)} · {sim.speed:g}배속', flush=True)
@@ -137,6 +161,10 @@ def main() -> None:
     ap.add_argument('--hours', type=float, default=8.0)
     ap.add_argument('--scenario', default=None, help='오프라인: 켤 시나리오 ID (쉼표로 여러 개)')
     ap.add_argument('--at', type=float, default=1.0, help='오프라인: 시나리오 시작 시각 (가상 시간, 시)')
+    ap.add_argument('--link', choices=('mqtt', 'opcua'), default=os.environ.get('SIM_LINK', 'mqtt'),
+                    help='설비 신호를 내는 길: mqtt = 브로커로 바로 · opcua = 가상 PLC(OPC UA 서버) → 엣지 게이트웨이')
+    ap.add_argument('--opcua', default=os.environ.get('OPCUA_ENDPOINT', 'opc.tcp://127.0.0.1:4840/lumitwin/'),
+                    help='--link opcua 일 때 OPC UA 서버 주소')
     args = ap.parse_args()
     if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
         try:

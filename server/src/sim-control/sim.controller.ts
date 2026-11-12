@@ -17,7 +17,14 @@ export class SimController {
   @Get('status')
   status() {
     const t = this.live.tick();
-    return { connected: t.connected.sim, sim: t.sim, edgeClients: this.mqtt.clientCount, received: this.mqtt.received };
+    return {
+      connected: t.connected.sim,
+      sim: t.sim,
+      link: t.sim?.link ?? 'mqtt',
+      gateway: t.connected.edge ? t.edge : null,
+      edgeClients: this.mqtt.clientCount,
+      received: this.mqtt.received,
+    };
   }
 
   @Post('speed')

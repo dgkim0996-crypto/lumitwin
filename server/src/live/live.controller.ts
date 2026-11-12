@@ -22,6 +22,12 @@ export class LiveController {
     return this.live.spc(station);
   }
 
+  /** 6대 로스: 설비·라인·공장별 시간 구성 */
+  @Get('losses')
+  losses() {
+    return this.live.losses();
+  }
+
   @Get('alarms')
   alarms() {
     return this.live.alarmList;

@@ -1,0 +1,3 @@
+# OPC UA 경로(가상 PLC → 엣지 게이트웨이)에만 필요하다: npm run sim:setup:opcua
+-r requirements.txt
+asyncua==2.1.0
