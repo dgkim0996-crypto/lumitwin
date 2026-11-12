@@ -21,8 +21,8 @@ function Dot({ on, label }: { on: boolean; label: string }) {
   return (
     <span className="flex items-center gap-1.5 text-xs text-sub" title={label}>
       <span className={cx('size-2 rounded-full', on ? 'bg-run' : 'bg-down blink')} />
-      {/* 좁은 화면(xl 미만)에서는 점만 보이고 글자는 화면 읽기 프로그램용으로 남긴다 */}
-      <span className="sr-only xl:not-sr-only">{label}</span>
+      {/* 2xl 미만에서는 점만 보이고 글자는 화면 읽기 프로그램용으로 남긴다 */}
+      <span className="sr-only 2xl:not-sr-only">{label}</span>
     </span>
   );
 }
@@ -44,9 +44,9 @@ function ScenarioMenu() {
     <div className="relative" ref={box}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className={cx('h-8 rounded-md border px-2 text-sm xl:px-3', active.size ? 'border-warn/60 bg-warn/15 text-warn' : 'border-line bg-white/5 hover:bg-white/10')}
+        className={cx('h-8 rounded-md border px-1.5 text-sm xl:px-3', active.size ? 'border-warn/60 bg-warn/15 text-warn' : 'border-line bg-white/5 hover:bg-white/10')}
       >
-        <span className="hidden xl:inline">이상 </span>시나리오{active.size ? ` · ${active.size}개` : ''}
+        <span className="hidden 2xl:inline">이상 </span>시나리오{active.size ? ` · ${active.size}개` : ''}
       </button>
       {open && (
         <div className="panel scroll-thin absolute right-0 top-10 z-50 max-h-[70vh] w-[440px] overflow-y-auto p-3">
@@ -134,11 +134,11 @@ function LinkStatus() {
         className="flex items-center gap-1.5 rounded px-1 text-xs text-sub hover:bg-white/10"
       >
         <span className={cx('size-2 rounded-full', on ? 'bg-run' : 'bg-down blink')} />
-        <span className="sr-only xl:not-sr-only">{opcua ? 'OPC UA' : '엣지'}</span>
+        <span className="sr-only 2xl:not-sr-only">{opcua ? 'OPC UA' : '엣지'}</span>
       </button>
       {open && (
         // 머리줄의 whitespace-nowrap이 물려 내려오므로 여기서 줄바꿈을 되살린다
-        <div className="panel absolute right-0 top-9 z-50 w-[360px] whitespace-normal p-3 text-xs">
+        <div className="panel absolute right-0 top-9 z-50 w-[380px] whitespace-normal p-3 text-xs">
           <div className="mb-2 text-sm font-semibold">데이터 경로</div>
           <div className="mb-3 flex flex-wrap items-center gap-1">
             {steps.map((s, i) => (
@@ -187,14 +187,14 @@ function AssistantButton() {
     <button
       onClick={() => setOpen(!open)}
       title="AI 현장 비서 (Ctrl+/)"
-      className={cx('flex h-8 items-center gap-1.5 rounded-md border px-2 text-sm xl:px-3', open ? 'border-info/60 bg-info/20 text-info' : 'border-line bg-white/5 hover:bg-white/10')}
+      className={cx('flex h-8 items-center gap-1.5 rounded-md border px-1.5 text-sm xl:px-3', open ? 'border-info/60 bg-info/20 text-info' : 'border-line bg-white/5 hover:bg-white/10')}
     >
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
         <path d="M4 5h16v11H9l-5 4V5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
         <path d="M9 10.5h.01M12 10.5h.01M15 10.5h.01" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
       </svg>
       <span>
-        <span className="hidden xl:inline">AI </span>비서
+        <span className="hidden 2xl:inline">AI </span>비서
       </span>
       {busy && <span className="size-1.5 animate-pulse rounded-full bg-info" />}
     </button>
@@ -219,7 +219,8 @@ export function TopBar() {
 
   return (
     // .panel의 backdrop-filter가 쌓임 맥락을 만들므로, 드롭다운이 아래 패널 위로 오도록 헤더 자체를 올린다
-    // 1024px 폭에서도 한 줄에 들어가도록 xl 미만에서는 간격·버튼 폭·글자를 줄인다
+    // 1024px 폭에서도 한 줄에 들어가도록 xl 미만에서는 간격·버튼 폭·글자를 줄이고,
+    // 버튼 앞 글자·연결 점 글자·넓은 배속 버튼은 2xl(1536px), 경과 시간은 1680px부터 보인다 (1280~1536px에서 넘치던 것)
     <header className="panel pointer-events-auto relative z-30 flex h-12 shrink-0 items-center gap-2 px-3 xl:gap-4 xl:px-4">
       <button onClick={home} className="flex shrink-0 items-center gap-2" title={`${FACTORY.site} · 가상 램프·전장 공장 — 공장 전체 보기`}>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -234,7 +235,7 @@ export function TopBar() {
 
       <div className="flex shrink-0 items-baseline gap-2 whitespace-nowrap">
         <span className="num text-lg font-semibold">{kst(sim?.t)}</span>
-        <span className="hidden text-xs text-dim xl:inline">가상 시각 · 경과 {duration(elapsed)}</span>
+        <span className="hidden text-xs text-dim min-[1680px]:inline">가상 시각 · 경과 {duration(elapsed)}</span>
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap">
@@ -245,7 +246,7 @@ export function TopBar() {
               disabled={!simConnected || send.isPending || readOnly}
               title={lock}
               onClick={() => send.mutate({ action: 'speed', speed: v })}
-              className={cx('num h-8 w-8 text-sm xl:w-11', sim?.speed === v ? 'bg-info/25 text-info' : 'hover:bg-white/10', (!simConnected || readOnly) && 'opacity-40')}
+              className={cx('num h-8 w-8 text-sm 2xl:w-11', sim?.speed === v ? 'bg-info/25 text-info' : 'hover:bg-white/10', (!simConnected || readOnly) && 'opacity-40')}
             >
               {v}×
             </button>

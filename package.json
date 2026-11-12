@@ -38,7 +38,8 @@
     "db:migrate": "npm run db:prepare -w server",
     "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w client",
     "test": "npm run test -w shared && npm run test -w server && npm run test:sim",
-    "test:sim": "node scripts/sim.mjs --test"
+    "test:sim": "node scripts/sim.mjs --test",
+    "screenshots": "node scripts/screenshots.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

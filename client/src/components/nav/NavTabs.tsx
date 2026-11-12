@@ -26,7 +26,7 @@ export function NavTabs() {
             key={n.href}
             href={n.href}
             title={n.hint}
-            className={cx('rounded px-1.5 py-1 text-sm whitespace-nowrap xl:px-2.5', on ? 'bg-info/20 font-medium text-ink' : 'text-sub hover:bg-white/10 hover:text-ink')}
+            className={cx('rounded px-1 py-1 text-sm whitespace-nowrap xl:px-2.5', on ? 'bg-info/20 font-medium text-ink' : 'text-sub hover:bg-white/10 hover:text-ink')}
           >
             {n.label}
           </Link>

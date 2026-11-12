@@ -1,9 +1,13 @@
 # LumiTwin — 가상 램프·전장 스마트공장
 
+[![CI](https://github.com/dgkim0996-crypto/lumitwin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dgkim0996-crypto/lumitwin/actions/workflows/ci.yml)
+
 자동차 램프와 전장(BMS·사이드미러)을 만드는 가상 공장의 3D 디지털 트윈과 MES입니다.
-Python 가상 PLC가 설비 데이터를 MQTT로 보내면, MES 서버가 받아서 OEE·SPC·알람을 실시간으로 계산하고 시리얼 단위 공정 이력을 PostgreSQL에 쌓습니다. 화면에서는 3D 공장 위에서 그 결과를 봅니다.
+Python 가상 PLC가 설비 데이터를 MQTT로(또는 OPC UA → 엣지 게이트웨이를 거쳐) 보내면, MES 서버가 받아서 OEE·SPC·알람을 실시간으로 계산하고 시리얼 단위 공정 이력을 PostgreSQL에 쌓습니다. 화면에서는 3D 공장 위에서 그 결과를 봅니다.
 
 > 공개 자료([docs/research](docs/research))를 바탕으로 만든 **가상 공장**입니다. 특정 회사의 실제 라인·수치와 무관하며 대외비 데이터를 쓰지 않습니다. 모든 공정 파라미터에는 근거 등급(확인 / 약함 / 가정)을 달았습니다.
+
+![3D 공장 화면: 세 라인 38대 설비의 상태(빨간 경광등은 고장), 왼쪽은 라인별 실적·OEE·FPY 카드와 알람](docs/images/factory.png)
 
 ## 무엇을 보여 주나
 
@@ -33,6 +37,22 @@ Python 가상 PLC가 설비 데이터를 MQTT로 보내면, MES 서버가 받아
 | `/operator` | 작업자 태블릿: 설비 고르기 | 라인별 설비와 지금 상태, 마지막에 쓴 설비로 `이어서` |
 | `/operator/{설비 코드}` | 작업자 태블릿: 설비 화면 | 상태·사유, 설비 조작(계획 정지·셋업·고장 등록·재가동·수리 완료), AI 비서에게 묻기(말로 묻기), 이 설비 알람, 공정 조건, 작업 전 점검, 작업표준서, 최근 가공. 가로 태블릿은 두 열, 세로·휴대폰은 한 열 |
 | 모든 화면 오른쪽 | AI 현장 비서 | 위쪽 `AI 비서` 버튼 또는 Ctrl+/. 조회한 도구와 결과 요약, 답(표·목록), 작업표준서 창, 음성 입력, 멈춤·새 대화. 열면 화면 내용이 패널 왼쪽으로 비켜 서고 좁으면 한 단으로 접힌다 |
+
+### 화면 모습
+
+가상 60배속으로 몇 시간 돌리고 이상 시나리오 3개(렌즈 금형 온조기 이상·LED 마운터 노즐 마모·웜기어 세트 불량 LOT 입고)를 켜고 증착기 한 대에 고장을 넣은 상태에서, OPC UA 경로(`npm run dev:opcua`)로 찍었습니다. AI 비서는 API 키 없이 도는 모의 모드입니다.
+
+| 생산 현황 | 6대 로스 |
+|---|---|
+| ![생산 현황: 라인 실적·OEE·FPY 타일, 시간대별 생산 막대와 목표선, 설비별 상태 시간 구성](docs/images/production.png) | ![6대 로스: 라인별 계획 시간 구성 막대와 개선 우선순위](docs/images/losses.png) |
+| **SPC** | **불량 분석** |
+| ![SPC: 규격 이탈로 Cpk가 떨어진 배광 검사 항목의 X̄·R 관리도와 히스토그램](docs/images/spc.png) | ![불량 분석: 불량 파레토와 불량품·양품 요인 비교, 자재 LOT 편중](docs/images/quality.png) |
+| **추적** | **AI 현장 비서** |
+| ![추적: 최근 불량 제품 목록과 시리얼 계보(거친 공정의 조건·판정과 투입 자재 LOT)](docs/images/trace.png) | ![AI 현장 비서: 'OEE가 왜 낮아? 6대 로스로 보여 줘'에 6대 로스 도구를 불러 표와 개선 순위로 답한 화면](docs/images/assistant.png) |
+| **작업자 태블릿** | **데이터 경로 (OPC UA)** |
+| ![작업자 태블릿: 고장 난 증착기의 상태·사유, 수리 완료 버튼, 공정 조건, 이 설비 알람](docs/images/operator.png) | ![데이터 경로 팝오버: 가상 PLC → OPC UA → 엣지 게이트웨이 → MQTT → MES와 게이트웨이 상태](docs/images/data-path.png) |
+
+화면을 바꾼 뒤에는 앱을 띄워 둔 채 `npm run screenshots`로 다시 찍습니다(설치된 Edge·Chrome을 헤드리스로 씀, `npm run screenshots -- losses spc`처럼 골라 찍기).
 
 ## 실행
 
@@ -85,7 +105,7 @@ npm run sim:setup:opcua
 npm run dev:opcua
 ```
 
-화면 위쪽 오른쪽의 `OPC UA` 점을 누르면 데이터 경로와 엣지 게이트웨이 상태(탐색한 설비·태그 수, 받은 이벤트, 버퍼, 빠진 실적, 재연결)가 보입니다. UaExpert 같은 OPC UA 클라이언트로 4840에 붙어 주소 공간(`Objects/LumiTwin/라인/설비/Tags`)과 이벤트를 직접 볼 수도 있습니다. 엣지만 따로 띄울 때는 `npm run edge -- --opcua opc.tcp://주소:4840/ --host 브로커 --port 1883`.
+화면 위쪽 맨 오른쪽의 두 번째 연결 점(1536px 이상 넓은 화면에서는 `OPC UA` 글자가 붙는다)을 누르면 데이터 경로와 엣지 게이트웨이 상태(탐색한 설비·태그 수, 받은 이벤트, 버퍼, 빠진 실적, 재연결)가 보입니다. UaExpert 같은 OPC UA 클라이언트로 4840에 붙어 주소 공간(`Objects/LumiTwin/라인/설비/Tags`)과 이벤트를 직접 볼 수도 있습니다. 엣지만 따로 띄울 때는 `npm run edge -- --opcua opc.tcp://주소:4840/ --host 브로커 --port 1883`.
 
 ### 테스트
 
