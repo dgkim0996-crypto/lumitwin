@@ -1,0 +1,4 @@
+faster-whisper>=1.1
+# 음성 디코딩은 server.py가 PyAV로 직접 한다 (faster-whisper 1.2.1의 decode_audio가 PyAV 15+와 맞지 않음)
+av>=12
+numpy

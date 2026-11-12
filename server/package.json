@@ -1,0 +1,40 @@
+{
+  "name": "@lumitwin/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LumiTwin MES — MQTT 수집, 실시간 OEE·SPC·알람, 생산 이력(LOT 추적) 저장",
+  "scripts": {
+    "dev": "nest start --watch",
+    "build": "nest build",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "generate": "prisma generate",
+    "migrate:diff": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script",
+    "db:prepare": "node scripts/prepare-db.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "@lumitwin/shared": "*",
+    "@nestjs/common": "^12.0.0",
+    "@nestjs/core": "^12.0.0",
+    "@nestjs/platform-express": "^12.0.0",
+    "@nestjs/platform-socket.io": "^12.0.0",
+    "@nestjs/websockets": "^12.0.0",
+    "@prisma/adapter-pg": "^7.0.0",
+    "@prisma/client": "^7.0.0",
+    "aedes": "^1.2.0",
+    "dotenv": "^17.0.0",
+    "pg": "^8.16.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^12.0.0",
+    "@types/express": "^5.0.1",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.15.0",
+    "prisma": "^7.0.0",
+    "typescript": "^5.9.3"
+  }
+}

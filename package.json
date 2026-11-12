@@ -1,0 +1,49 @@
+{
+  "name": "lumitwin",
+  "private": true,
+  "version": "0.1.0",
+  "description": "가상 램프·전장 스마트공장 — 3D 디지털 트윈 + MES + AI 현장 비서",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "postinstall": "npm run build -w shared && npm run generate -w server",
+    "db": "node scripts/local-db.mjs",
+    "sim": "node scripts/sim.mjs",
+    "sim:setup": "node scripts/sim.mjs --setup",
+    "whisper": "node scripts/whisper.mjs",
+    "whisper:setup": "node scripts/whisper.mjs --setup",
+    "dev": "concurrently -k -n db,shared,server,client,sim -c gray,yellow,blue,magenta,green \"npm:db\" \"npm:dev:shared\" \"npm:dev:server\" \"npm:dev:client\" \"npm:dev:sim\"",
+    "dev:shared": "npm run dev -w shared",
+    "dev:server": "wait-on tcp:54332 shared/dist/index.js && npm run db:prepare -w server && npm run dev -w server",
+    "dev:client": "wait-on shared/dist/index.mjs tcp:8790 && npm run dev -w client",
+    "dev:sim": "wait-on tcp:1884 shared/dist/factory.json && node scripts/sim.mjs",
+    "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
+    "start": "concurrently -k -n db,server,client,sim -c gray,blue,magenta,green \"npm:db\" \"npm:start:server\" \"npm:start:client\" \"npm:start:sim\"",
+    "start:server": "wait-on tcp:54332 && npm run db:prepare -w server && npm run start -w server",
+    "start:client": "wait-on tcp:8790 && npm run start -w client",
+    "start:sim": "wait-on tcp:1884 && node scripts/sim.mjs",
+    "tunnel": "node scripts/tunnel.mjs",
+    "share": "concurrently -k -n db,server,client,sim,tunnel -c gray,blue,magenta,green,cyan \"npm:db\" \"npm:start:server\" \"npm:start:client\" \"npm:start:sim\" \"npm:tunnel\"",
+    "db:migrate": "npm run db:prepare -w server",
+    "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "embedded-postgres": "^18.6.0-beta.19",
+    "wait-on": "^8.0.4"
+  },
+  "allowScripts": {
+    "@embedded-postgres/windows-x64@18.6.0-beta.19": true,
+    "@embedded-postgres/darwin-arm64@18.6.0-beta.19": true,
+    "@embedded-postgres/linux-x64@18.6.0-beta.19": true,
+    "prisma@7.10.1": true,
+    "@prisma/engines@7.10.1": true,
+    "esbuild@0.27.7": true
+  }
+}

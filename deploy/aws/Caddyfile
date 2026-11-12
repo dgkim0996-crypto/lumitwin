@@ -1,0 +1,75 @@
+# LumiTwin 배포용 Caddyfile 템플릿
+# 쓰는 법: lumitwin.example.com 을 내 도메인으로 바꿔 /etc/caddy/Caddyfile 로 두고 sudo systemctl reload caddy
+#   (setup-ubuntu.sh 에 도메인을 주면 바꿔서 넣어 준다)
+# - 방화벽(보안 그룹)은 80·443만 연다. Caddy가 Let's Encrypt 인증서를 저절로 받고 갱신한다.
+# - HTTPS여야 태블릿·휴대폰 브라우저가 마이크(음성 질문)를 허락한다.
+# - 8790(MES)·5180(화면)·1884(MQTT)·8792(받아쓰기)는 127.0.0.1에서만 받으므로 밖에서 닿지 않는다.
+
+lumitwin.example.com {
+	# (선택) 공개 링크 대신 아이디·비밀번호를 걸 때. 비밀번호 해시는 `caddy hash-password` 로 만든다
+	# basic_auth {
+	# 	demo $2a$14$여기에_해시
+	# }
+
+	# 압축은 화면(HTML·JS·CSS)에만 한다. /api/v1에 걸면 AI 비서 답(NDJSON 스트림)을 모아서 보내 흐르듯 안 보인다
+	@static not path /api/v1/* /socket.io/*
+	encode @static zstd gzip
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "microphone=(self), camera=(), geolocation=()"
+	}
+
+	# 음성 질문 녹음 올리기 (서버 상한 10MiB + 멀티파트 머리 여유)
+	handle /api/v1/assistant/transcribe {
+		request_body {
+			max_size 12MiB
+		}
+		reverse_proxy 127.0.0.1:8790 {
+			transport http {
+				response_header_timeout 2m
+			}
+		}
+	}
+
+	# MES API. 화면 서버(Next)를 거치지 않고 바로 보낸다
+	handle /api/v1/* {
+		request_body {
+			max_size 2MiB
+		}
+		reverse_proxy 127.0.0.1:8790 {
+			# AI 비서 답을 받는 대로 바로 보낸다 (스트리밍)
+			flush_interval -1
+			transport http {
+				# 도구를 여러 번 부르는 긴 답도 끊지 않는다
+				read_timeout 5m
+				write_timeout 5m
+			}
+		}
+	}
+
+	# 실시간 연결 (socket.io: 웹소켓, 안 되면 롱 폴링)
+	handle /socket.io/* {
+		request_body {
+			max_size 2MiB
+		}
+		reverse_proxy 127.0.0.1:8790
+	}
+
+	# 화면 (Next)
+	handle {
+		request_body {
+			max_size 2MiB
+		}
+		reverse_proxy 127.0.0.1:5180
+	}
+
+	log {
+		output file /var/log/caddy/lumitwin.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+	}
+}

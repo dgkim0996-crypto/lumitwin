@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.next/
+*.tsbuildinfo
+.env
+.env.local
+.local-db/
+server/src/generated/
+server/storage/
+sim/.venv/
+tools/whisper/.venv/
+tools/whisper/.models/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Cloudflare Tunnel 실행 파일 (받는 법: deploy/cloudflare/README.md)
+tools/cloudflared/*.exe
+tools/cloudflared/cloudflared
+tools/cloudflared/tunnel-token.txt

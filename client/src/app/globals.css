@@ -1,0 +1,127 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'IBM Plex Sans KR', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --color-bg: #0a0f16;
+  --color-panel: rgba(14, 20, 30, 0.86);
+  --color-panel-solid: #0e141e;
+  --color-line: rgba(148, 170, 200, 0.14);
+  --color-ink: #e6edf6;
+  --color-sub: #94a3b8;
+  --color-dim: #64748b;
+  --color-run: #3ddc84;
+  --color-warn: #f5b544;
+  --color-down: #ff4d5e;
+  --color-info: #4fb3ff;
+  --color-hl: #f5b544;
+  --color-em: #4fb3ff;
+  --color-osm: #7ee0a1;
+  /* 차트: 바탕은 진한 패널색, 격자·축은 한 단계 밝은 헤어라인, 단일 계열은 파랑 하나 (dataviz 검증: 파랑↔불량 빨강 색각 ΔE 25) */
+  --color-chart: #0e141e;
+  --color-grid: #1c2532;
+  --color-axis: #2e3a4a;
+  --color-series: #3987e5;
+  --color-series-soft: rgba(57, 135, 229, 0.12);
+  /* 차트의 불량·이탈 표시 (상태 critical). 글자용 --color-down보다 한 단계 어둡게 해 밝기 범위를 맞췄다 */
+  --color-ng: #d03b3b;
+}
+
+/* MES 화면 카드: 3D 위가 아니므로 반투명 대신 불투명 바탕 */
+.card {
+  background: var(--color-chart);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* HUD 패널: 반투명 + 흐림. 3D가 비쳐 보이게 한다 */
+.panel {
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 170, 200, 0.25) transparent;
+}
+
+/* 3D 위 이름표 */
+.station-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #e6edf6;
+  background: rgba(10, 15, 22, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  transform: translateY(-4px);
+}
+.station-tag b {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.station-tag .muted {
+  color: #94a3b8;
+}
+.station-tag .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  display: inline-block;
+}
+.zone-tag {
+  white-space: nowrap;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #cbd5e1;
+  background: rgba(10, 15, 22, 0.7);
+  border: 1px solid rgba(148, 170, 200, 0.25);
+  border-radius: 5px;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+.blink {
+  animation: blink 1s steps(2, start) infinite;
+}
+
+/* 작업표준서 창: 인용한 절을 잠깐 밝힌다 */
+.ws-flash {
+  animation: ws-flash 1.6s ease-out;
+  border-radius: 4px;
+}
+@keyframes ws-flash {
+  0%,
+  40% {
+    background: rgba(79, 179, 255, 0.22);
+  }
+  100% {
+    background: transparent;
+  }
+}

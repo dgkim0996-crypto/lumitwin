@@ -1,0 +1,4 @@
+# 배포 서버(Linux)에서 그대로 실행하는 파일은 Windows에서 받아도 줄 끝을 LF로 둔다 (CRLF면 bash가 깨진다)
+*.sh text eol=lf
+Caddyfile text eol=lf
+*.py text eol=lf

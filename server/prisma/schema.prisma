@@ -1,0 +1,146 @@
+// LumiTwin MES 생산 이력. 실시간 값(태그·상태)은 메모리에 두고, 여기에는 추적에 필요한 기록만 남긴다.
+// 시각은 모두 시뮬레이터의 가상 시각이다. 시뮬레이터를 초기화할 때마다 실행(sim_run)이 새로 생기고,
+// 시리얼 번호는 실행마다 다시 매겨지므로 (run_id, serial)로 구분한다.
+// 외래키 제약은 만들지 않는다 (relationMode = "prisma"): 수집이 밀릴 때 기록 순서가 바뀌어도 막히지 않게 한다.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider     = "postgresql"
+  relationMode = "prisma"
+}
+
+/// 시뮬레이터 실행 1회 (초기화하면 새로 생긴다)
+model SimRun {
+  id        Int      @id @default(autoincrement())
+  /// 가상 시계 시작 시각 (시뮬레이터 상태 메시지의 startedAt)
+  startedAt DateTime @unique @map("started_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@map("sim_run")
+}
+
+/// 시리얼 단위 제품·반제품. 공정을 지날 때마다 마지막 상태로 갱신한다
+model ProductionUnit {
+  runId        Int      @map("run_id")
+  serial       String
+  item         String
+  line         String
+  lastStep     String   @map("last_step")
+  lastStation  String   @map("last_station")
+  /// WIP(공정 중) · NG(불량 판정) · DONE(최종 공정 통과) · CONSUMED(상위 제품에 조립됨)
+  status       String
+  defect       String?
+  /// 이 부품이 조립된 상위 제품 시리얼
+  parentSerial String?  @map("parent_serial")
+  firstAt      DateTime @map("first_at") @db.Timestamptz(3)
+  lastAt       DateTime @map("last_at") @db.Timestamptz(3)
+
+  @@id([runId, serial])
+  @@index([runId, parentSerial])
+  @@index([runId, line, status])
+  @@map("production_unit")
+}
+
+/// 공정 통과 기록: 설비가 부품 하나를 가공·검사할 때마다 1행 (공정 조건과 판정을 함께 남긴다)
+model ProcessRecord {
+  id        BigInt   @id @default(autoincrement())
+  runId     Int      @map("run_id")
+  serial    String
+  item      String
+  line      String
+  step      String
+  station   String
+  /// OK · NG
+  result    String
+  defect    String?
+  cycleSec  Float    @map("cycle_sec")
+  /// 공정 조건(태그)과 검사 측정값
+  values    Json
+  /// 이 설비에서 계산돼 부품에 실린 속성
+  attrs     Json?
+  /// 투입 자재 LOT (자재 코드 → LOT 번호)
+  lots      Json?
+  /// 이번에 조립된 하위 부품 시리얼
+  comps     String[] @default([])
+  /// 시뮬레이터만 아는 진실: 검사를 빠져나간 잠재 불량 (최종 공정에서만)
+  escaped   String[] @default([])
+  startedAt DateTime @map("started_at") @db.Timestamptz(3)
+  endedAt   DateTime @map("ended_at") @db.Timestamptz(3)
+
+  @@index([runId, serial])
+  @@index([runId, station, endedAt])
+  @@map("process_record")
+}
+
+/// 자재 LOT 사용 이력. LOT 하나에서 어느 부품이 나왔는지 거꾸로 찾는 데 쓴다
+model MaterialLotUse {
+  id       BigInt   @id @default(autoincrement())
+  runId    Int      @map("run_id")
+  material String
+  lot      String
+  serial   String
+  station  String
+  usedAt   DateTime @map("used_at") @db.Timestamptz(3)
+
+  @@index([runId, lot])
+  @@index([runId, serial])
+  @@map("material_lot_use")
+}
+
+/// 설비 상태 변화 (가동·대기·고장 …)
+model StateEvent {
+  id      BigInt   @id @default(autoincrement())
+  runId   Int      @map("run_id")
+  station String
+  state   String
+  reason  String?
+  at      DateTime @db.Timestamptz(3)
+
+  @@index([runId, station, at])
+  @@map("state_event")
+}
+
+/// 작업 전 점검 기록 (작업자 태블릿). 항목은 작업표준서 "작업 전 점검" 절에서 가져온다
+model CheckRecord {
+  id        Int      @id @default(autoincrement())
+  runId     Int      @map("run_id")
+  station   String
+  /// 항목을 가져온 작업표준서 ID
+  doc       String?
+  /// [{ text, ok }]
+  items     Json
+  /// 이상으로 표시한 항목 수
+  ngCount   Int      @map("ng_count")
+  /// 점검자 (이름 또는 사번, 선택)
+  by        String?
+  /// 가상 시각
+  at        DateTime @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([runId, station, at])
+  @@map("check_record")
+}
+
+/// 알람 (고장·규격 이탈·SPC·품질·점검)
+model Alarm {
+  id       Int       @id @default(autoincrement())
+  runId    Int       @map("run_id")
+  /// 실시간 화면의 알람 번호 (서버 메모리에서 매긴다)
+  liveId   Int       @map("live_id")
+  station  String
+  severity String
+  kind     String
+  title    String
+  detail   String?
+  at       DateTime  @db.Timestamptz(3)
+  ackedAt  DateTime? @map("acked_at") @db.Timestamptz(3)
+
+  @@index([runId, at])
+  @@index([liveId])
+  @@map("alarm")
+}
