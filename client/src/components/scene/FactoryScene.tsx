@@ -55,6 +55,27 @@ function CameraRig() {
   return null;
 }
 
+/**
+ * 그림자 지도는 매 프레임 대신 몇 프레임에 한 번만 다시 그린다.
+ * 설비 모델에 그림자를 드리우는 부품이 많아 그림자 패스가 그리기 호출의 큰 몫을 차지한다.
+ * 움직이는 로봇 팔의 그림자가 초당 10번 남짓 갱신되는 정도라 눈으로는 차이가 거의 없다.
+ */
+function ShadowThrottle({ every = 4 }: { every?: number }) {
+  const gl = useThree((s) => s.gl);
+  const n = useRef(0);
+  useEffect(() => {
+    gl.shadowMap.autoUpdate = false;
+    gl.shadowMap.needsUpdate = true;
+    return () => {
+      gl.shadowMap.autoUpdate = true;
+    };
+  }, [gl]);
+  useFrame(() => {
+    if (++n.current % every === 0) gl.shadowMap.needsUpdate = true;
+  });
+  return null;
+}
+
 export default function FactoryScene() {
   return (
     <Canvas
@@ -91,6 +112,7 @@ export default function FactoryScene() {
       </Suspense>
       <OrbitControls makeDefault enableDamping dampingFactor={0.08} maxPolarAngle={1.38} minDistance={6} maxDistance={190} target={HOME.target.toArray()} />
       <CameraRig />
+      <ShadowThrottle />
       <LabelProjector />
     </Canvas>
   );

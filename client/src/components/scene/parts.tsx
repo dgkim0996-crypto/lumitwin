@@ -8,7 +8,8 @@ import { STATE_COLOR } from '@/lib/format';
 
 // ─────────── 공용 재질 (모든 설비가 나눠 쓴다) ───────────
 
-const std = (color: string, metalness = 0.3, roughness = 0.6, extra: THREE.MeshStandardMaterialParameters = {}) =>
+/** 표준 재질. 설비 파일에서 새 재질이 필요하면 모듈 맨 위에서 한 번만 만들어 나눠 쓴다 (렌더마다 만들지 않는다) */
+export const std = (color: string, metalness = 0.3, roughness = 0.6, extra: THREE.MeshStandardMaterialParameters = {}) =>
   new THREE.MeshStandardMaterial({ color, metalness, roughness, ...extra });
 
 export const MAT = {

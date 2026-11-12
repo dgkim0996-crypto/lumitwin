@@ -10,6 +10,7 @@ import { cx, duration, GRADE_LABEL, KIND_LABEL, kst, num, pct, STATE_COLOR, STAT
 import { useLive } from '@/lib/live';
 import { defectName, refName } from '@/lib/names';
 import { SpcMini } from './SpcMini';
+import { StationGuide } from './StationGuide';
 
 function Grade({ g }: { g: keyof typeof GRADE_LABEL }) {
   const x = GRADE_LABEL[g];
@@ -58,14 +59,23 @@ function TagRow({ t, v, here }: { t: TagDef; v: number | undefined; here: string
 
 const STATE_ORDER: StationState[] = ['RUN', 'IDLE', 'BLOCKED', 'DOWN', 'SETUP', 'STOP'];
 
-function Section({ title, children, right }: { title: string; children: ReactNode; right?: ReactNode }) {
+/** open·onToggle을 주면 제목을 눌러 접고 펼 수 있다 (접힌 동안은 내용을 그리지 않는다) */
+function Section({ title, children, right, open, onToggle }: { title: string; children: ReactNode; right?: ReactNode; open?: boolean; onToggle?: () => void }) {
+  const shown = open ?? true;
   return (
     <div className="border-t border-line px-4 py-3">
-      <div className="mb-1.5 flex items-center justify-between text-xs font-semibold text-sub">
-        <span>{title}</span>
-        {right}
+      <div className={cx('flex items-center justify-between text-xs font-semibold text-sub', shown && 'mb-1.5')}>
+        {onToggle ? (
+          <button onClick={onToggle} className="flex items-center gap-1 hover:text-ink" aria-expanded={shown}>
+            <span className="inline-block w-2.5 text-[10px] text-dim">{shown ? '▾' : '▸'}</span>
+            {title}
+          </button>
+        ) : (
+          <span>{title}</span>
+        )}
+        {shown && right}
       </div>
-      {children}
+      {shown && children}
     </div>
   );
 }
@@ -79,10 +89,13 @@ export function StationPanel() {
   const select = useLive((s) => s.select);
   const openTrace = useLive((s) => s.openTrace);
   const [spcAll, setSpcAll] = useState(false);
+  // 패널이 길어져 SPC·최근 가공은 접어 두고 연다 (설비를 바꿔도 펼친 상태는 유지)
+  const [spcOpen, setSpcOpen] = useState(false);
+  const [unitsOpen, setUnitsOpen] = useState(false);
   const def = code ? STATIONS[code] : undefined;
   const line = def ? LINES.find((l) => l.code === def.line) : undefined;
 
-  const spc = useQuery({ queryKey: ['spc', code], queryFn: () => api.get<SpcChart[]>(`/live/spc/${code}`), enabled: !!code, refetchInterval: 3000 });
+  const spc = useQuery({ queryKey: ['spc', code], queryFn: () => api.get<SpcChart[]>(`/live/spc/${code}`), enabled: !!code && spcOpen, refetchInterval: 3000 });
   const op = useMutation({ mutationFn: (o: 'stop' | 'start' | 'repair' | 'fail') => simCommand({ action: 'station', code: code!, op: o }) });
   const { readOnly } = useAccess();
 
@@ -127,8 +140,9 @@ export function StationPanel() {
             근거 <Grade g={def.grade} />
           </span>
         </div>
-        <p className="mt-2 text-xs leading-relaxed text-sub">{def.desc}</p>
-        {def.note && <p className="mt-1 text-[11px] leading-relaxed text-dim">{def.note}</p>}
+      </div>
+      <div className="mt-3">
+        <StationGuide def={def} />
       </div>
 
       <Section title="설비 종합 효율 (OEE)">
@@ -244,6 +258,8 @@ export function StationPanel() {
 
       <Section
         title="SPC 관리도 (X̄, 부분군 5)"
+        open={spcOpen}
+        onToggle={() => setSpcOpen((v) => !v)}
         right={
           <button onClick={() => setSpcAll((v) => !v)} className="text-[11px] font-normal text-info hover:underline">
             {spcAll ? '연속값 숨기기' : '연속값도 보기'}
@@ -258,7 +274,7 @@ export function StationPanel() {
         </div>
       </Section>
 
-      <Section title="최근 가공 (MES 기록)">
+      <Section title="최근 가공 (MES 기록)" open={unitsOpen} onToggle={() => setUnitsOpen((v) => !v)}>
         {mine.length === 0 && <div className="text-xs text-dim">아직 없습니다</div>}
         {mine.map((u) => (
           <div key={`${u.serial}${u.t}`} className="flex items-center gap-2 py-0.5 text-xs">

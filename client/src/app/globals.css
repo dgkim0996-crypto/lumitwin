@@ -91,6 +91,28 @@ body {
   border-radius: 999px;
   display: inline-block;
 }
+/* 고른 설비의 부위 이름표: 아래 꼭짓점이 가리키는 곳이 그 부위다 */
+.part-tag {
+  position: relative;
+  white-space: nowrap;
+  padding: 2px 7px;
+  font-size: 11px;
+  color: #0a0f16;
+  background: rgba(255, 213, 107, 0.95);
+  border-radius: 4px;
+  transform: translateY(-9px);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+.part-tag::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  margin-left: -5px;
+  border: 5px solid transparent;
+  border-bottom: 0;
+  border-top-color: rgba(255, 213, 107, 0.95);
+}
 .zone-tag {
   white-space: nowrap;
   padding: 2px 8px;
