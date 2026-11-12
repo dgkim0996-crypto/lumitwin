@@ -4,12 +4,14 @@ import {
   DEFECT_NAMES,
   LINES,
   SPC_RULES,
+  STARTUP_WINDOW_SEC,
   STATIONS,
   type AlarmLive,
   type AmrMsg,
   type LineDef,
   type LineLive,
   type LiveSnapshot,
+  type LossReport,
   type Oee,
   type SimEventMsg,
   type SimStatusMsg,
@@ -17,6 +19,7 @@ import {
   type StateMsg,
   type StationDef,
   type StationLive,
+  type StationLoss,
   type StationState,
   type TagsMsg,
   type TickPayload,
@@ -24,6 +27,7 @@ import {
   SPC_SUBGROUP,
 } from '@lumitwin/shared';
 import { MqttBrokerService, type MqttInbound } from '../mqtt/mqtt-broker.service';
+import { roundLosses, stationLosses, sumLosses } from './losses';
 import { r3, stationOee, type StateTimes } from './oee';
 import { buildSeries, SPC_KEEP_POINTS, type SpcSeries } from './spc';
 
@@ -48,6 +52,10 @@ interface StationRt {
   spc: Map<string, SpcSeries>;
   /** 직전 가공의 시작 시각 ms (배치 판별) */
   lastStartMs: number;
+  /** 마지막으로 고장·셋업·정지에서 다시 돌기 시작한 가상 시각 (ms). 초기 수율 로스 판정 */
+  restartMs: number;
+  /** 재가동 직후(STARTUP_WINDOW_SEC 안) 나온 불량 수 */
+  startupNg: number;
 }
 
 interface LineRt {
@@ -70,6 +78,8 @@ const MAX_ALARMS = 300;
 const SIM_TIMEOUT_MS = 5_000;
 /** 실행을 확인하기 전(첫 상태 메시지 전)에 붙잡아 둘 최대 메시지 수 */
 const MAX_HELD = 20_000;
+/** 멈춘 상태: 여기서 벗어나면 재가동으로 본다 */
+const HALTED = new Set<StationState>(['DOWN', 'SETUP', 'STOP']);
 
 export interface LiveEvents {
   run: [startedAt: string];
@@ -237,6 +247,7 @@ export class LiveService implements OnModuleInit {
     const prev = live.state;
     live.stateSec[prev] = (live.stateSec[prev] ?? 0) + Math.max(0, ms - rt.sinceMs) / 1000;
     if (prev === 'DOWN') rt.upAtMs = ms;
+    if (HALTED.has(prev) && !HALTED.has(state)) rt.restartMs = ms;
     live.state = state;
     live.reason = reason;
     live.since = t;
@@ -275,6 +286,8 @@ export class LiveService implements OnModuleInit {
     if (ng) {
       live.ng++;
       if (msg.defect) live.defects[msg.defect] = (live.defects[msg.defect] ?? 0) + 1;
+      const sinceRestart = Date.parse(msg.t) - rt.restartMs;
+      if (sinceRestart >= 0 && sinceRestart <= STARTUP_WINDOW_SEC * 1000) rt.startupNg++;
     } else {
       live.ok++;
     }
@@ -410,6 +423,26 @@ export class LiveService implements OnModuleInit {
     const lines: Record<string, LineLive> = {};
     for (const [code, line] of this.lines) lines[code] = this.lineLive(line, stations);
     return { sim: this.sim, stations, lines, amrs: this.amrs, connected: { sim: Date.now() - this.lastSimAt < SIM_TIMEOUT_MS } };
+  }
+
+  /**
+   * 6대 로스: 설비별 시간 구성과 라인·공장 합계 (계산식은 losses.ts).
+   * 초기 수율 로스는 메모리에서만 센다: 서버를 다시 띄우면 그 뒤 재가동부터 다시 센다 (그 전 불량은 공정 불량으로 들어간다)
+   */
+  losses(): LossReport {
+    const stations: StationLoss[] = [];
+    for (const rt of this.stations.values()) {
+      const { ok, ng } = rt.live;
+      const lt = stationLosses(this.stationTimes(rt), { ok, ng, startupNg: rt.startupNg, idealSec: rt.idealSec, utility: rt.utility });
+      stations.push({ station: rt.def.code, line: rt.def.line, ok, ng, startupNg: rt.startupNg, ...lt });
+    }
+    return {
+      t: this.virtualNow,
+      startupWindowSec: STARTUP_WINDOW_SEC,
+      total: roundLosses(sumLosses(stations)),
+      lines: LINES.map((l) => ({ line: l.code, ...roundLosses(sumLosses(stations.filter((s) => s.line === l.code))) })),
+      stations: stations.map(roundLosses),
+    };
   }
 
   snapshot(): LiveSnapshot {
@@ -567,6 +600,7 @@ export class LiveService implements OnModuleInit {
         return [def.code, {
           def, live, sinceMs: NaN, idealSec, utility, window: [], qualityOn: false,
           limitRun: new Map(), limitOn: new Set(), upAtMs: 0, spc: buildSeries(def), lastStartMs: NaN,
+          restartMs: -Infinity, startupNg: 0,
         } satisfies StationRt];
       }),
     );

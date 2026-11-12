@@ -110,6 +110,19 @@ describe('공장 정의', () => {
     }
   });
 
+  it('재가동 초품 규칙은 그 설비의 불량 코드를 쓰고 값이 말이 된다', () => {
+    const withWarmup = allStations.filter((s) => s.warmup);
+    assert.ok(withWarmup.length >= 1, '초기 수율 로스를 만들 설비가 하나도 없다');
+    for (const s of withWarmup) {
+      const w = s.warmup;
+      assert.ok((s.defects ?? []).some((d) => d.code === w.defect && !d.latent), `${s.code} 초품 불량 ${w.defect}이 즉시 판정 불량에 없다`);
+      assert.ok(w.shots >= 1 && Number.isInteger(w.shots), `${s.code} shots`);
+      assert.ok(w.prob > 0 && w.prob <= 1, `${s.code} prob`);
+      assert.ok(w.minHalt > 0, `${s.code} minHalt`);
+      assert.ok(s.cycle > 0, `${s.code}: 사이클 없는 설비에는 초품이 없다`);
+    }
+  });
+
   it('시나리오 효과가 실제 설비·신호를 건드린다', () => {
     const ids = FACTORY.scenarios.map((s) => s.id);
     assert.equal(new Set(ids).size, ids.length);

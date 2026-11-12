@@ -1,4 +1,4 @@
-import type { AttrDef, DefectDef, MeasureDef, SourceGrade, TagDef, Term } from '../types';
+import type { AttrDef, DefectDef, MeasureDef, SourceGrade, TagDef, Term, WarmupDef } from '../types';
 
 type TagOpts = Partial<Pick<TagDef, 'lsl' | 'usl' | 'idle' | 'tau' | 'digits' | 'note'>> & { terms?: [string, number][] };
 type Opt = { digits?: number; note?: string };
@@ -28,6 +28,14 @@ export function meas(
   o: Opt & { lsl?: number; usl?: number } = {},
 ): MeasureDef {
   return { key, name, unit, base, sd, terms: terms(t), defect, grade, ...o };
+}
+
+/**
+ * 사출기 재가동 초품: 10분 넘게 멈췄다 다시 돌리면 첫 3쇼트는 절반꼴로 불량 (온도·재료가 안정될 때까지).
+ * 현장에서는 이 쇼트를 미리 버리거나(퍼지·시사출) 초품 검사로 거른다
+ */
+export function warmup(defect: string, o: Partial<Omit<WarmupDef, 'defect'>> = {}): WarmupDef {
+  return { minHalt: 10, shots: 3, prob: 0.5, defect, grade: 'assumed', note: '재가동 직후 금형·실린더 온도 불안정 (수치는 가정)', ...o };
 }
 
 /** 불량 모드. drivers: [참조, 방향, 계수] */

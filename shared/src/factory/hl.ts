@@ -1,5 +1,5 @@
 import type { LineDef } from '../types';
-import { attr, ct, cy, defect, meas } from './build';
+import { attr, ct, cy, defect, meas, warmup } from './build';
 
 /**
  * A베이 — LED 헤드램프 라인
@@ -45,6 +45,7 @@ export const HL: LineDef = {
     },
     {
       code: 'HL-IM-L1', name: '렌즈 사출기 650t', kind: 'injection', step: 'LENS_MOLD', pos: [-47, -33], cycle: 62, cycleCv: 0.01, mtbf: 600, mttr: 25, grade: 'assumed',
+      warmup: warmup('WELD'),
       desc: '외부 렌즈(PC)를 사출한다. 금형온도가 낮거나 보압이 높으면 잔류응력이 남아 하드코팅에서 크랙이 난다.',
       tags: [
         ct('melt_temp', '용융 온도', '°C', 300, 1.2, 'confirmed', { lsl: 285, usl: 315, idle: 300, tau: 120, digits: 1, note: 'Covestro 렌즈 가이드: 280~320 °C, 표준 300 °C' }),
@@ -79,6 +80,7 @@ export const HL: LineDef = {
     },
     {
       code: 'HL-IM-R1', name: '리플렉터 BMC 사출기', kind: 'injection', step: 'REFL_MOLD', pos: [-47, -25.5], cycle: 60, cycleCv: 0.01, mtbf: 720, mttr: 25, grade: 'weak',
+      warmup: warmup('SHORT'),
       desc: '열경화성 BMC로 리플렉터를 성형한다. 금형 약 150 °C, 경화 30~40초.',
       tags: [
         ct('mold_temp', '금형 온도', '°C', 150, 1.0, 'confirmed', { lsl: 140, usl: 160, idle: 148, tau: 180, digits: 1, note: 'LyondellBasell BMC 304: 약 150 °C' }),
@@ -113,6 +115,7 @@ export const HL: LineDef = {
     },
     {
       code: 'HL-IM-H1', name: '하우징 사출기 850t', kind: 'injection', step: 'HOUS_MOLD', pos: [-47, -17.5], cycle: 62, cycleCv: 0.01, mtbf: 600, mttr: 25, grade: 'assumed',
+      warmup: warmup('SINK'),
       desc: 'PP-TD 하우징을 사출한다. 냉각이 고르지 않으면 렌즈와 붙는 플랜지가 휘어 기밀 불량의 원인이 된다.',
       tags: [
         ct('melt_temp', '용융 온도', '°C', 220, 1.2, 'assumed', { lsl: 200, usl: 240, idle: 220, tau: 120, digits: 1 }),

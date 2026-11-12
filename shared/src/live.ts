@@ -350,3 +350,53 @@ export interface LotSkew {
   /** 두 비율 차이의 z 값 */
   z: number;
 }
+
+// ─────────────────────────── 6대 로스 (TPM) ───────────────────────────
+// 계획 시간 = 가치 시간 + 6대 로스. 가치 시간 ÷ 계획 시간 = OEE (가동률 × 성능 × 양품률과 같은 값)
+
+export const LOSS_KEYS = ['breakdown', 'setup', 'minorStop', 'speed', 'defect', 'startup'] as const;
+export type LossKey = (typeof LOSS_KEYS)[number];
+
+export const LOSS_INFO: Record<LossKey, { name: string; factor: 'availability' | 'performance' | 'quality'; desc: string }> = {
+  breakdown: { name: '고장', factor: 'availability', desc: '설비 고장으로 멈춘 시간 (고장 정지)' },
+  setup: { name: '셋업·조정', factor: 'availability', desc: '품종·금형 교체, 조정으로 멈춘 시간' },
+  minorStop: { name: '순간 정지·공회전', factor: 'performance', desc: '돌 수 있는데 앞에서 부품이 안 오거나(투입 대기) 뒤가 막혀(배출 대기) 쉰 시간' },
+  speed: { name: '속도 저하', factor: 'performance', desc: '이상 사이클보다 느리게 가공해 더 든 시간' },
+  defect: { name: '공정 불량', factor: 'quality', desc: '불량품을 만드는 데 쓴 시간 (재가동 직후 불량 제외)' },
+  startup: { name: '초기 수율', factor: 'quality', desc: '고장·셋업·정지 뒤 다시 돌린 직후(10분) 나온 불량에 쓴 시간' },
+};
+
+export const LOSS_FACTOR_NAMES = { availability: '가동률', performance: '성능', quality: '양품률' } as const;
+
+/** 재가동 뒤 이 시간(가상 초) 안에 나온 불량은 초기 수율 로스로 센다 */
+export const STARTUP_WINDOW_SEC = 600;
+
+/** 시간 구성 (가상 초) */
+export interface LossTimes {
+  /** 계획 시간 = 전체 − 계획 정지 */
+  planned: number;
+  /** 계획 정지 (작업자가 일부러 세운 시간. 로스로 세지 않는다) */
+  stopped: number;
+  /** 가치 시간 = 양품 수 × 한 개 시간. planned로 나누면 OEE */
+  valuable: number;
+  loss: Record<LossKey, number>;
+}
+
+export interface StationLoss extends LossTimes {
+  station: string;
+  line: LineCode;
+  ok: number;
+  ng: number;
+  /** 그중 재가동 직후 불량 */
+  startupNg: number;
+}
+
+export interface LossReport {
+  /** 지금 가상 시각 */
+  t: string | null;
+  startupWindowSec: number;
+  /** 공장 전체 (설비 시간 합) */
+  total: LossTimes;
+  lines: (LossTimes & { line: LineCode })[];
+  stations: StationLoss[];
+}

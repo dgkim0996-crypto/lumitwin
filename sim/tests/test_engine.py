@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import copy
 import time
 import unittest
 
@@ -111,6 +112,48 @@ class StationOps(unittest.TestCase):
         sim.station_op('HL-IM-L1', 'start')
         sim.env.run(until=900)
         self.assertIn(st.state, ('RUN', 'IDLE', 'BLOCKED'))
+
+    def warm_sim(self, prob: float = 1.0) -> Sim:
+        factory = copy.deepcopy(FACTORY)
+        for ln in factory['lines']:
+            for sd in ln['stations']:
+                if sd.get('warmup'):
+                    sd['warmup']['prob'] = prob
+        sim = Sim(factory, io=None, realtime=False, seed=4)
+        sim.env.run(until=600)
+        return sim
+
+    def test_long_halt_makes_warmup_scrap(self):
+        """오래 멈췄다 다시 돌리면 첫 몇 사이클이 초품 불량이 된다 (6대 로스의 초기 수율)"""
+        sim = self.warm_sim()
+        st = sim.stations['HL-IM-L1']
+        w = st.d['warmup']
+        sim.station_op('HL-IM-L1', 'fail')
+        sim.env.run(until=600 + w['minHalt'] * 60 + 60)
+        before = sim.stats.defects['HL-IM-L1'][w['defect']]
+        sim.station_op('HL-IM-L1', 'repair')
+        self.assertEqual(st.warm_left, w['shots'])
+        sim.env.run(until=sim.env.now + st.d['cycle'] * (w['shots'] + 2) * 1.5)
+        self.assertEqual(st.warm_left, 0)
+        self.assertGreaterEqual(sim.stats.defects['HL-IM-L1'][w['defect']] - before, w['shots'])
+
+    def test_short_halt_or_setup_release_order(self):
+        sim = self.warm_sim()
+        st = sim.stations['HL-IM-L1']
+        # 잠깐(1분) 멈춘 것은 초품이 없다
+        sim.station_op('HL-IM-L1', 'stop')
+        sim.env.run(until=sim.env.now + 60)
+        sim.station_op('HL-IM-L1', 'start')
+        self.assertEqual(st.warm_left, 0)
+        # 고장 중에 정지도 걸었다면 둘 다 풀려야 재가동이고, 멈춘 시간은 처음 멈춘 때부터 센다
+        sim.station_op('HL-IM-L1', 'fail')
+        sim.env.run(until=sim.env.now + 400)
+        sim.station_op('HL-IM-L1', 'stop')
+        sim.env.run(until=sim.env.now + 400)
+        sim.station_op('HL-IM-L1', 'repair')
+        self.assertEqual(st.warm_left, 0, '아직 정지 중')
+        sim.station_op('HL-IM-L1', 'start')
+        self.assertEqual(st.warm_left, st.d['warmup']['shots'])
 
     def test_downtime_is_counted(self):
         sim = Sim(FACTORY, io=None, realtime=False, seed=2)

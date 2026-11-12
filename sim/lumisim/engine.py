@@ -198,6 +198,9 @@ class Station:
         self.stopped = False
         # 작업자가 세운 이유가 셋업(품종·금형 교체)이면 STOP 대신 SETUP으로 알린다 (OEE에서 계획 정지는 빼고 셋업은 손실로 센다)
         self.setup = False
+        # 재가동 초품: 멈추기 시작한 가상 시각과, 다시 돈 뒤 남은 불안정 사이클 수
+        self.halt_at: float | None = None
+        self.warm_left = 0
         self.down_token = 0
         self.resume_ev = self.env.event()
         self.phase: dict[int, str] = {}
@@ -254,12 +257,26 @@ class Station:
         ev, self.resume_ev = self.resume_ev, self.env.event()
         ev.succeed()
 
+    def _halt(self) -> None:
+        if self.halt_at is None:
+            self.halt_at = self.env.now
+
+    def _resume_from_halt(self) -> None:
+        """고장·정지가 모두 풀렸을 때: 오래 멈췄으면 처음 몇 사이클을 불안정 구간으로 둔다"""
+        if self.down or self.stopped or self.halt_at is None:
+            return
+        w = self.d.get('warmup')
+        if w and self.env.now - self.halt_at >= w['minHalt'] * 60:
+            self.warm_left = int(w['shots'])
+        self.halt_at = None
+
     # ── 고장·수리·정지 ──
     def fail(self, reason: str | None = None) -> None:
         if self.down:
             return
         self.down = True
         self.down_token += 1
+        self._halt()
         self.reason = reason or self.rng.choice(FAILURE_REASONS.get(self.kind, DEFAULT_REASONS))
         for idx, proc in enumerate(self.procs):
             if self.phase.get(idx) == 'run' and proc.is_alive:
@@ -272,6 +289,7 @@ class Station:
             return
         self.down = False
         self.reason = None
+        self._resume_from_halt()
         self._wake()
         self.refresh_state()
         self.sim.event('repair', f'{self.d["name"]} 수리 완료', station=self.code)
@@ -283,12 +301,14 @@ class Station:
         if on:
             self.setup = setup
             self.reason = reason or ('셋업' if setup else '작업자 정지')
+            self._halt()
             for idx, proc in enumerate(self.procs):
                 if self.phase.get(idx) == 'run' and proc.is_alive:
                     proc.interrupt('stop')
         else:
             self.setup = False
             self.reason = None
+            self._resume_from_halt()
             self._wake()
         self.refresh_state()
 
@@ -451,6 +471,10 @@ class Station:
         d = self.d
         cyc = self.sample_cycle_tags()
         self.values.update(cyc)
+        # 재가동 직후 불안정 사이클 (한 사이클에 나오는 부품 모두에 적용)
+        warm = d.get('warmup') if self.warm_left > 0 else None
+        if warm:
+            self.warm_left -= 1
         outs = []
         for items, lots in sets:
             item, merged = self.make_item(items)
@@ -489,6 +513,9 @@ class Station:
                     item.latent.discard(code)
                     if ng is None:
                         ng = code
+            # 5) 재가동 초품 (평소에는 난수를 쓰지 않아, 재가동이 없으면 결과가 전과 같다)
+            if warm and ng is None and self.rng.random() < warm['prob']:
+                ng = warm['defect']
             msg = {
                 't': self.sim.now_iso(), 'start': self.sim.iso_at(start), 'serial': item.serial, 'item': item.item,
                 'step': d['step'], 'station': self.code, 'line': self.line, 'result': 'NG' if ng else 'OK',

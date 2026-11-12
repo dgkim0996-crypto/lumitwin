@@ -4,8 +4,11 @@ import {
   DEFECT_NAMES,
   FACTORY,
   LINES,
+  LOSS_INFO,
+  LOSS_KEYS,
   STATIONS,
   type AlarmLive,
+  type LossTimes,
   type AssistantRef,
   type LineCode,
   type StationState,
@@ -166,6 +169,12 @@ export const TOOL_DEFS: Anthropic.Beta.Messages.BetaTool[] = [
     },
   },
   {
+    name: 'six_losses',
+    description:
+      '6대 로스(TPM): 계획 시간을 가치 시간(= OEE)과 고장·셋업·조정·순간 정지·공회전·속도 저하·공정 불량·초기 수율로 나눈 비율, 라인별 구성, 잃은 시간이 큰 설비×로스 순위. OEE가 왜 낮은지, 무엇부터 줄일지 답할 때 쓴다. 라인으로 거를 수 있다.',
+    input_schema: { type: 'object', properties: { line: LINE_PROP }, additionalProperties: false },
+  },
+  {
     name: 'hourly_output',
     description: '라인의 시간대별(가상 시각) 완성 수와 불량 수, 시간당 목표. 최근 12시간.',
     input_schema: { type: 'object', properties: { line: LINE_PROP }, required: ['line'], additionalProperties: false },
@@ -212,6 +221,7 @@ export function toolLabel(name: string, input: Input): string {
     case 'spc_overview': return `SPC 요약 조회${arg('line')}`;
     case 'defect_pareto': return `불량 파레토 조회${arg('line')}`;
     case 'defect_factors': return `불량 요인 비교${arg('station')}${arg('defect')}`;
+    case 'six_losses': return `6대 로스 조회${arg('line')}`;
     case 'hourly_output': return `시간대별 실적 조회${arg('line')}`;
     case 'trace_serial': return `시리얼 추적${arg('serial')}`;
     case 'lot_trace': return `LOT 영향 범위 조회${arg('lot')}`;
@@ -240,6 +250,7 @@ export class AssistantTools {
         case 'spc_overview': return this.spcOverview(input);
         case 'defect_pareto': return await this.pareto(input);
         case 'defect_factors': return await this.factors(input);
+        case 'six_losses': return this.losses(input);
         case 'hourly_output': return await this.hourly(input);
         case 'trace_serial': return await this.trace(input);
         case 'lot_trace': return await this.lot(input);
@@ -431,6 +442,44 @@ export class AssistantTools {
         ...lots.map((l): AssistantRef => ({ kind: 'lot', id: l.lot, label: l.lot })),
         { kind: 'page', id: `/quality?station=${code}`, label: '불량 분석' },
       ],
+    };
+  }
+
+  losses(input: Input): ToolOutcome {
+    const line = lineArg(input);
+    if (!line.ok) return fail(line.error);
+    const r = this.live.losses();
+    const scope: LossTimes = line.v ? r.lines.find((l) => l.line === line.v)! : r.total;
+    const view = (x: LossTimes) => ({
+      plannedMin: Math.round(x.planned / 60),
+      oeePct: x.planned ? pct(x.valuable / x.planned) : null,
+      lossPct: Object.fromEntries(LOSS_KEYS.map((k) => [LOSS_INFO[k].name, x.planned ? pct(x.loss[k] / x.planned) : 0])),
+    });
+    const rank = (keys: readonly (typeof LOSS_KEYS)[number][], n: number) =>
+      r.stations
+        .filter((s) => !line.v || s.line === line.v)
+        .flatMap((s) => keys.map((k) => ({ station: s.station, stationName: STATIONS[s.station]?.name, loss: LOSS_INFO[k].name, minutes: Math.round(s.loss[k] / 6) / 10, ofStationPct: s.planned ? pct(s.loss[k] / s.planned) : 0 })))
+        .filter((x) => x.minutes > 0)
+        .sort((a, b) => b.minutes - a.minutes)
+        .slice(0, n);
+    // 그 설비에서 직접 줄일 수 있는 로스와, 앞 공정 때문에 생긴 대기(순간 정지·공회전)를 따로 준다
+    const top = rank(LOSS_KEYS.filter((k) => k !== 'minorStop'), 10);
+    const waiting = rank(['minorStop'], 3);
+    const ranked = LOSS_KEYS.filter((k) => scope.loss[k] > 0).sort((a, b) => scope.loss[b] - scope.loss[a]);
+    const data = {
+      scope: line.v ? LINES.find((l) => l.code === line.v)?.name : '공장 전체',
+      ...view(scope),
+      lines: line.v ? undefined : r.lines.map((l) => ({ line: l.line, name: LINES.find((d) => d.code === l.line)?.name, ...view(l) })),
+      topStationLosses: top,
+      topWaiting: waiting,
+      startupWindowMin: r.startupWindowSec / 60,
+      note: '계획 시간 = 가치 시간 + 6대 로스(설비 시간 합). topStationLosses는 그 설비에서 직접 줄일 수 있는 로스(고장·셋업·속도 저하·불량·초기 수율) 순위, topWaiting은 순간 정지·공회전(투입·배출 대기) 순위다. 대기는 대개 앞 설비가 멈추거나 느려 생기므로 개선은 topStationLosses의 앞 설비부터 본다. 초기 수율은 재가동 뒤 일정 시간 안에 나온 불량.',
+    };
+    const big = ranked[0];
+    return {
+      ok: true, data,
+      summary: `OEE ${data.oeePct ?? '−'}%${big ? ` · 가장 큰 로스 ${LOSS_INFO[big].name} ${pct(scope.loss[big] / (scope.planned || 1))}%` : ''}`,
+      refs: [...new Set(top.slice(0, 4).map((x) => x.station))].map(stationRef).concat({ kind: 'page', id: '/losses', label: '6대 로스' }),
     };
   }
 

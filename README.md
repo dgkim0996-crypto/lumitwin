@@ -13,8 +13,8 @@ Python 가상 PLC가 설비 데이터를 MQTT로 보내면, MES 서버가 받아
 | 데이터 흐름 | SimPy 이산사건 시뮬레이터 → MQTT(`lt/v1/{line}/{station}/…`) → NestJS 내장 브로커(aedes) → 실시간 집계 → Socket.io → 3D 화면 |
 | 품질 인과 | 원인 공정과 증상 공정이 다르다. 예: 전장 라인 LED 마운터 노즐 마모 → 헤드램프 라인 배광 불량. 이상 시나리오 10가지(설비 이상 9 + 불량 자재 LOT 입고 1)를 화면에서 켜고 끌 수 있다 |
 | MES | 설비·라인 OEE, FPY, X̄-R 관리도와 Cpk, 알람(고장·규격 이탈·품질·SPC), 완제품 → 부품 → 자재 LOT 계보 조회, 원격 명령(정지·재가동·고장·수리). 서버를 다시 띄워도 실시간 집계는 DB 기록에서 되살아난다([설계 5.6](docs/DESIGN.md#56-서버-재시작과-실시간-집계-복원)) |
-| MES 화면 | 생산 현황(시간대별 실적·설비별 OEE·병목 후보), SPC(관리도·Cpk·히스토그램·규칙 위반), 불량 분석(파레토·불량품과 양품의 공정값 비교·출하 유출), 추적(시리얼 계보·자재 LOT 불량률 비교·회수 범위) |
-| AI 현장 비서 | 공장 데이터 도구 11개(현황·설비·알람·SPC·파레토·요인 비교·LOT·계보·작업표준서 검색)를 불러 답하는 챗봇. API 키가 없으면 같은 도구를 규칙으로 부르는 모의 모드로 돈다. 가상 작업표준서 15건을 검색해 `[WS-OSM-02 §7]`처럼 인용하고, 음성으로도 묻는다(로컬 Whisper 또는 브라우저 음성 인식). 답 속 설비·LOT·인용을 누르면 그 화면으로 간다([설계 6장](docs/DESIGN.md#6-ai-현장-비서)) |
+| MES 화면 | 생산 현황(시간대별 실적·설비별 OEE·병목 후보), 6대 로스(계획 시간이 고장·셋업·대기·속도·불량·초기 수율로 새는 구성과 개선 우선순위), SPC(관리도·Cpk·히스토그램·규칙 위반), 불량 분석(파레토·불량품과 양품의 공정값 비교·출하 유출), 추적(시리얼 계보·자재 LOT 불량률 비교·회수 범위) |
+| AI 현장 비서 | 공장 데이터 도구 12개(현황·설비·알람·SPC·6대 로스·파레토·요인 비교·LOT·계보·작업표준서 검색)를 불러 답하는 챗봇. API 키가 없으면 같은 도구를 규칙으로 부르는 모의 모드로 돈다. 가상 작업표준서 15건을 검색해 `[WS-OSM-02 §7]`처럼 인용하고, 음성으로도 묻는다(로컬 Whisper 또는 브라우저 음성 인식). 답 속 설비·LOT·인용을 누르면 그 화면으로 간다([설계 6장](docs/DESIGN.md#6-ai-현장-비서)) |
 | 작업자 태블릿 | 설비 앞에서 쓰는 큰 버튼 화면. 사유를 골라 계획 정지·셋업·고장 등록(사유는 MES 상태 이력과 OEE 손실 구분에 들어감), 작업 전 점검 기록(항목은 작업표준서에서 읽고, 이상이면 MES 알람), 재가동·수리 전 안전 확인, 표준서 조치 절 바로 열기, 말로 묻기([설계 7장](docs/DESIGN.md#7-작업자-태블릿과-배포)) |
 | 공개 링크·배포 | 무료: 이 PC를 Cloudflare Tunnel로 HTTPS 공개, 공개 링크 방문자는 보기 전용(제어 키로 풀 수 있음)([deploy/cloudflare](deploy/cloudflare/README.md)). 상시 서버용으로 Caddy(HTTPS) + pm2 설치 스크립트도 있음([deploy/aws](deploy/aws/README.md)) |
 
@@ -24,6 +24,7 @@ Python 가상 PLC가 설비 데이터를 MQTT로 보내면, MES 서버가 받아
 |---|---|---|
 | `/` | 3D 공장 | 설비 상태(경광등), 라인 카드, 알람, 설비 상세 패널, AMR 이송 |
 | `/production` | 생산 현황 | 숫자 타일(완성·최근 1시간/목표·OEE·FPY·설비 상태), 시간대별 생산 막대(목표선), 설비별 상태 시간 구성과 OEE, 병목 후보(가동률×성능 최대) |
+| `/losses` | 6대 로스 | 공장·라인별 계획 시간 구성(가치 시간 = OEE + 고장·셋업·조정·순간 정지·공회전·속도 저하·공정 불량·초기 수율), 개선 우선순위(설비 × 로스, 기본은 대기 제외), 설비별 로스 구성 |
 | `/spc` | SPC | 관리 항목 목록(Cpk 등급·최근 이탈), X̄·R 관리도(Western Electric 규칙 위반 표시), 개별값 히스토그램과 규격선, Cp·Cpk·Ppk |
 | `/quality` | 불량 분석 | 라인 불량 파레토, 불량 요인 비교(불량품과 같은 시기 양품의 공정값을 하위 부품까지 따라가 효과 크기 순으로), 자재 LOT 편중, 출하 유출 |
 | `/trace` | 추적 | 시리얼 검색과 계보(정·역추적), 자재 LOT별 불량률(같은 자재의 다른 LOT 대비 편중 의심, 같은 시기 더 강한 편중 LOT가 있으면 그 영향 가능으로 표시), LOT의 영향 제품(회수·격리 범위, CSV). `/trace?lot=…`·`?serial=…`로 바로 열 수 있다 |
@@ -134,7 +135,7 @@ bash deploy/aws/setup-ubuntu.sh lumitwin.내도메인
 | [`shared/`](shared) | TypeScript, tsup | 공장 정의(라인·설비·태그·불량 인과·시나리오)의 단일 원본. 빌드할 때 `factory.json`도 내보내 Python이 같은 정의를 읽는다 |
 | [`sim/`](sim) | Python, SimPy, paho-mqtt | 가상 PLC·엣지. 설비 상태 기계, 버퍼, 배치·터널 설비, MTBF/MTTR 고장, 품질 인과, AMR |
 | [`server/`](server) | NestJS 12, Prisma 7, PostgreSQL, aedes, Socket.io | MQTT 수집, 실시간 OEE·SPC·알람, 일괄 기록, 추적 API, 시뮬레이터 제어 |
-| [`client/`](client) | Next.js 16, React 19, React Three Fiber, Tailwind 4, TanStack Query, zustand | 3D 공장(설비 24종 절차적 모델링), HUD, 상세 패널, 계보 창, MES 화면 4개(차트는 라이브러리 없이 SVG로 직접 그림), AI 비서 패널 |
+| [`client/`](client) | Next.js 16, React 19, React Three Fiber, Tailwind 4, TanStack Query, zustand | 3D 공장(설비 24종 절차적 모델링), HUD, 상세 패널, 계보 창, MES 화면 5개(차트는 라이브러리 없이 SVG로 직접 그림), AI 비서 패널 |
 | [`tools/whisper/`](tools/whisper) | Python, faster-whisper | 선택: OpenAI 호환 로컬 음성 받아쓰기 서버 |
 | [`deploy/cloudflare/`](deploy/cloudflare) | cloudflared | 무료 공개 링크: 이 PC를 Cloudflare Tunnel로 공개하는 방법(`scripts/tunnel.mjs`)과 보기 전용 설정 |
 | [`deploy/aws/`](deploy/aws) | bash, pm2, Caddy | 상시 서버 한 대 배포: 설치·갱신 스크립트, pm2 프로세스 정의, Caddyfile, 운영용 `.env` 예시 |
@@ -147,6 +148,7 @@ bash deploy/aws/setup-ubuntu.sh lumitwin.내도메인
 | `GET factory` | 공장 정의 + 불량 이름 |
 | `GET live/snapshot` | 설비·라인·AMR 실시간 상태 |
 | `GET live/spc/:station` | 설비의 X̄-R 관리도, Cpk |
+| `GET live/losses` | 6대 로스: 설비별 시간 구성(가상 초)과 라인·공장 합계, 재가동 직후 불량 수 |
 | `GET live/alarms`, `POST live/alarms/:id/ack` | 알람 목록·확인 |
 | `GET production/trace/:serial` | 시리얼 계보(하위 부품까지 재귀) |
 | `GET production/ancestors/:serial` | 이 부품이 들어간 상위 제품 |
@@ -169,5 +171,4 @@ bash deploy/aws/setup-ubuntu.sh lumitwin.내도메인
 
 - 고정 주소 공개 링크: Cloudflare 계정·도메인으로 이름 붙인 터널 쓰기 (스크립트는 토큰만 넣으면 됨)
 - 늘 켜 둘 링크가 필요하면 상시 서버로 옮기기 (Caddy·pm2 스크립트는 준비됨, Linux에서 아직 돌려 보지 않음)
-- 비가동 사유를 손실 종류별로 묶어 보는 화면 (설비 종합 효율의 6대 로스)
 - OPC UA 시뮬레이터를 붙여 PLC → OPC UA → 엣지 → MQTT 경로 보이기
