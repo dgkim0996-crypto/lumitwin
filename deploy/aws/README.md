@@ -3,6 +3,8 @@
 LumiTwin 전체(화면·MES·MQTT 브로커·시뮬레이터·DB)를 Ubuntu 서버 한 대에 올리는 방법입니다.
 면접관이 링크 하나로 3D 공장, MES 화면, 작업자 태블릿, AI 비서를 볼 수 있게 하는 것이 목표입니다.
 
+> 무료로 올리려면 [Oracle Cloud 상시 무료 서버 안내](../oracle/README.md)를 먼저 보세요. 설치 스크립트는 이 폴더의 것을 그대로 쓰고, VM 만들기·방화벽·무료 주소만 다릅니다.
+
 ```
             인터넷 (80·443만 열림)
                     │
@@ -25,9 +27,10 @@ LumiTwin 전체(화면·MES·MQTT 브로커·시뮬레이터·DB)를 Ubuntu 서�
 
 | 파일 | 하는 일 |
 |---|---|
-| `setup-ubuntu.sh` | 새 서버 준비 한 번에: 스왑, 패키지, Node 22·pm2, Caddy, DB, `server/.env`, 빌드, 기동, 재부팅 자동 시작 |
+| `setup-ubuntu.sh` | 새 서버 준비 한 번에: 스왑, 패키지, 방화벽(iptables가 막고 있으면 80·443), Node 22·pm2, Caddy, DB, `server/.env`, 빌드, 기동, 재부팅 자동 시작 |
 | `update.sh` | 새 버전 반영: 받기 → 설치 → 마이그레이션 → 빌드 → 서버·화면 재시작 (시뮬레이터는 그대로) |
-| `ecosystem.config.cjs` | pm2 프로세스 정의 (`lumitwin-server`, `lumitwin-client`, `lumitwin-sim`, 선택 `lumitwin-whisper`·`lumitwin-db`) |
+| `ecosystem.config.cjs` | pm2 프로세스 정의 (`lumitwin-server`, `lumitwin-client`, `lumitwin-sim`, `SIM_LINK=opcua`면 `lumitwin-edge`, 선택 `lumitwin-whisper`·`lumitwin-db`). 구성 값은 `server/.env`에서도 읽는다 |
+| `pm2-sync.cjs` | 구성 값이 바뀌었을 때 시뮬레이터·엣지 게이트웨이를 내렸다가 새 인자로 띄우게 한다 (`setup-ubuntu.sh`가 부른다) |
 | `Caddyfile` | HTTPS 역방향 프록시 템플릿. AI 비서 스트리밍·음성 업로드·웹소켓 설정 포함 |
 | `server.env.example` | 운영용 `server/.env` 예시 |
 
@@ -43,7 +46,7 @@ LumiTwin 전체(화면·MES·MQTT 브로커·시뮬레이터·DB)를 Ubuntu 서�
 - 램이 4GB는 되어야 합니다. 화면 빌드가 램을 많이 써서 1GB(`t3.micro`)로는 빌드가 죽습니다. 스크립트가 4GB 스왑을 만들어 2GB 서버에서도 빌드는 되지만 느립니다.
 - 음성 받아쓰기 서버(faster-whisper `small`)를 같이 켜면 램을 1GB쯤 더 씁니다. 켜지 않아도 Chrome·Edge의 브라우저 음성 인식으로 음성 질문이 됩니다.
 - 서울 리전(`ap-northeast-2`)을 고르면 국내에서 빠릅니다.
-- arm64(`t4g`)는 시험하지 않았습니다. x86_64를 권합니다.
+- arm64(`t4g`, Oracle A1)는 아직 실제로 돌려 보지 않았습니다. 네이티브 패키지의 linux-arm64 판이 `package-lock.json`에 있는 것까지는 확인했습니다.
 - 요금은 AWS 요금표에서 확인하세요. 면접 기간에만 켜 두고, 끝나면 인스턴스를 중지하거나 지우면 됩니다. 중지해도 디스크와 공인 IPv4는 요금이 나갑니다. AWS Budgets로 예산 알림을 걸어 두면 안전합니다.
 
 ## 2. AWS에서 할 일
@@ -114,31 +117,37 @@ cd ~/lumitwin && bash deploy/aws/setup-ubuntu.sh lumitwin.내도메인
 스크립트가 하는 일:
 
 1. 4GB 스왑을 만듭니다.
-2. apt로 git, 빌드 도구, Python, PostgreSQL을 설치합니다.
-3. Node.js 22와 pm2를 설치합니다.
-4. Caddy를 설치합니다.
-5. DB 사용자·DB `lumitwin`을 무작위 비밀번호로 만들고, DB 시간대를 UTC로 둡니다.
-6. `server/.env`를 만들고(권한 600) DB 주소와 도메인을 채웁니다.
-7. `npm ci`로 패키지를 설치합니다.
-8. 시뮬레이터 가상환경을 만듭니다.
-9. DB 마이그레이션을 합니다.
-10. 빌드합니다.
-11. Caddy 설정을 넣습니다.
-12. pm2로 띄우고 재부팅 때 자동으로 시작하게 합니다.
+2. apt로 git, 빌드 도구, Python, PostgreSQL을 설치합니다. 도메인이 `auto`면 공인 IP로 `a-b-c-d.sslip.io` 주소를 만듭니다.
+3. iptables가 REJECT로 막고 있으면(Oracle Ubuntu 이미지) 80·443 허용 줄을 그 앞에 넣고 저장합니다. AWS 이미지는 막는 줄이 없어 건너뜁니다.
+4. Node.js 22와 pm2를 설치합니다.
+5. Caddy를 설치합니다.
+6. DB 사용자·DB `lumitwin`을 무작위 비밀번호로 만들고, DB 시간대를 UTC로 둡니다.
+7. `server/.env`를 만들고(권한 600) DB 주소, 도메인, 제어 키, 구성 값(`SIM_LINK`·`SIM_SPEED`·`WHISPER`)을 채웁니다.
+8. `npm ci`로 패키지를 설치합니다.
+9. 시뮬레이터 가상환경을 만듭니다(`SIM_LINK=opcua`면 asyncua까지).
+10. DB 마이그레이션을 합니다.
+11. 빌드합니다.
+12. Caddy 설정을 넣습니다.
+13. pm2로 띄우고 재부팅 때 자동으로 시작하게 합니다.
 
 **선택 옵션** (스크립트 앞에 붙입니다)
 
 | 옵션 | 하는 일 |
 |---|---|
+| `SIM_LINK=opcua` | 설비 신호를 OPC UA 경로(가상 PLC → 엣지 게이트웨이 → MQTT)로 보낸다. asyncua를 설치하고 `lumitwin-edge`를 더 띄운다 (기본 `mqtt`) |
 | `WHISPER=1` | 음성 받아쓰기 서버(faster-whisper)를 설치해 켜고 `server/.env`에 `STT_BASE_URL`을 넣는다. 처음 실행 때 `small` 모델 약 460MB를 내려받는다 |
 | `WHISPER_MODEL=base` | 받아쓰기 모델을 바꾼다 (`tiny`·`base`·`small`·`medium`). 작을수록 가볍고 덜 정확하다 |
-| `SIM_SPEED=20` | 시뮬레이터 배속 (기본 5) |
+| `SIM_SPEED=20` | 시뮬레이터 배속 (`1`·`5`·`20`·`60`, 기본 5) |
+
+`SIM_LINK`·`SIM_SPEED`·`WHISPER`는 `server/.env`에 적어 두므로, 다음에 옵션 없이 다시 돌려도 같은 구성으로 뜹니다. 바꿀 때는 새 값을 붙여 다시 돌립니다(시뮬레이터가 새 실행으로 다시 시작합니다).
 
 ```bash
 WHISPER=1 bash deploy/aws/setup-ubuntu.sh lumitwin.내도메인
 ```
 
-**도메인 없이 IP로만 먼저 볼 때**: 도메인을 빼고 돌리면 Caddy 설정을 건너뜁니다. HTTP로 IP 접속만 할 때는 Caddyfile의 사이트 주소를 `:80`으로 바꿔 넣습니다. 이 경우 마이크(음성 질문)는 브라우저가 막습니다.
+**도메인이 없을 때**: 도메인 자리에 `auto`를 넣으면 공인 IP로 `a-b-c-d.sslip.io` 주소를 만들어 HTTPS 인증서까지 받습니다. sslip.io는 모든 사용자가 Let's Encrypt 발급 한도를 나눠 써서 가끔 막히므로, 오래 쓸 주소는 DuckDNS를 권합니다([Oracle 안내 4장](../oracle/README.md#4-주소-만들기-duckdns-무료)).
+
+**IP로만 먼저 볼 때**: 도메인을 빼고 돌리면 Caddy 설정을 건너뜁니다. HTTP로 IP 접속만 할 때는 Caddyfile의 사이트 주소를 `:80`으로 바꿔 넣습니다. 이 경우 마이크(음성 질문)는 브라우저가 막습니다.
 
 ```bash
 sed 's/^lumitwin\.example\.com {/:80 {/' deploy/aws/Caddyfile | sudo tee /etc/caddy/Caddyfile >/dev/null && sudo systemctl reload caddy
@@ -254,7 +263,7 @@ EMBEDDED_DB=1 pm2 startOrReload deploy/aws/ecosystem.config.cjs --update-env && 
 |---|---|
 | HTTPS 인증서를 못 받음 | 도메인 A 레코드가 이 서버 IP인지(`dig +short <도메인>`), 보안 그룹에 80·443이 열렸는지, `sudo journalctl -u caddy -n 50` |
 | 502 Bad Gateway | `pm2 status`에서 `lumitwin-server`·`lumitwin-client`가 online인지, `pm2 logs` |
-| 상단 엣지 점이 빨강 | `pm2 logs lumitwin-sim` — 가상환경이 없으면 `npm run sim:setup` 후 `pm2 restart lumitwin-sim` |
+| 상단 엣지 점이 빨강 | `pm2 logs lumitwin-sim` — 가상환경이 없으면 `npm run sim:setup` 후 `pm2 restart lumitwin-sim`. `SIM_LINK=opcua`면 `pm2 logs lumitwin-edge`도 본다 |
 | 빌드가 `Killed`로 끝남 | 램 부족. `swapon --show`로 스왑을 확인하고 더 큰 인스턴스를 쓴다 |
 | AI 비서 답이 한꺼번에 나옴 | Caddyfile의 `/api/v1/*`에 `flush_interval -1`이 있는지, 압축(`encode`)이 API에 걸리지 않았는지 |
 | 음성 질문이 안 됨 | HTTPS로 들어왔는지(마이크), 서버 받아쓰기를 쓰면 `pm2 logs lumitwin-whisper` |

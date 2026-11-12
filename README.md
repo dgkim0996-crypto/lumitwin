@@ -22,7 +22,7 @@ Python 가상 PLC가 설비 데이터를 MQTT로(또는 OPC UA → 엣지 게이
 | MES 화면 | 생산 현황(시간대별 실적·설비별 OEE·병목 후보), 6대 로스(계획 시간이 고장·셋업·대기·속도·불량·초기 수율로 새는 구성과 개선 우선순위), 설비 보전(고장 이력·MTBF·MTTR 실적과 설계·계획 보전 일정, [설계 5.8](docs/DESIGN.md#58-설비-보전-maintenance-화면-maintenance)), SPC(관리도·Cpk·히스토그램·규칙 위반), 불량 분석(파레토·불량품과 양품의 공정값 비교·출하 유출), 추적(시리얼 계보·자재 LOT 불량률 비교·회수 범위) |
 | AI 현장 비서 | 공장 데이터 도구 13개(현황·설비·알람·SPC·6대 로스·설비 보전·파레토·요인 비교·LOT·계보·작업표준서 검색)를 불러 답하는 챗봇. API 키가 없으면 같은 도구를 규칙으로 부르는 모의 모드로 돈다. 가상 작업표준서 15건을 검색해 `[WS-OSM-02 §7]`처럼 인용하고, 음성으로도 묻는다(로컬 Whisper 또는 브라우저 음성 인식). 답 속 설비·LOT·인용을 누르면 그 화면으로 간다([설계 6장](docs/DESIGN.md#6-ai-현장-비서)) |
 | 작업자 태블릿 | 설비 앞에서 쓰는 큰 버튼 화면. 사유를 골라 계획 정지·셋업·고장 등록(사유는 MES 상태 이력과 OEE 손실 구분에 들어감), 작업 전 점검 기록(항목은 작업표준서에서 읽고, 이상이면 MES 알람), 재가동·수리 전 안전 확인, 표준서 조치 절 바로 열기, 말로 묻기([설계 7장](docs/DESIGN.md#7-작업자-태블릿과-배포)) |
-| 공개 링크·배포 | 무료: 이 PC를 Cloudflare Tunnel로 HTTPS 공개, 공개 링크 방문자는 보기 전용(제어 키로 풀 수 있음)([deploy/cloudflare](deploy/cloudflare/README.md)). 상시 서버용으로 Caddy(HTTPS) + pm2 설치 스크립트도 있음([deploy/aws](deploy/aws/README.md)) |
+| 공개 링크·배포 | 무료: 이 PC를 Cloudflare Tunnel로 HTTPS 공개, 공개 링크 방문자는 보기 전용(제어 키로 풀 수 있음)([deploy/cloudflare](deploy/cloudflare/README.md)). 상시 서버: Caddy(HTTPS) + pm2 설치 스크립트([deploy/aws](deploy/aws/README.md)), Oracle Cloud 상시 무료 ARM VM에 올리는 순서([deploy/oracle](deploy/oracle/README.md)) |
 
 ### 화면
 
@@ -156,11 +156,16 @@ npm run share
 | `npm run tunnel` | 떠 있는 화면(5180)에 터널만 붙이기 |
 | `npm run share` | 위 둘을 한 번에 |
 
-**상시 서버**: 늘 켜 둘 링크가 필요하면 Linux 서버 한 대(Ubuntu 24.04, 램 4GB)에 Caddy(HTTPS 자동 인증서)와 pm2로 올립니다. 비용이 드는 방법이라 스크립트만 준비해 두었습니다. 서버 고르기, 보안 그룹, 도메인, 운영 명령은 [deploy/aws/README.md](deploy/aws/README.md)에 있습니다.
+**상시 서버**: PC를 꺼도 열려 있는 링크가 필요하면 Linux 서버 한 대(Ubuntu 24.04, 램 4GB)에 Caddy(HTTPS 자동 인증서)와 pm2로 전부 올립니다. 설치 스크립트 하나가 서버 준비부터 기동·재부팅 자동 시작까지 합니다.
+
+- **무료**: Oracle Cloud 상시 무료 ARM 서버(A1, 2 OCPU · 4GB)와 무료 주소(DuckDNS). 가입, VM 만들기, 방화벽, 주소, 회수 규칙은 [deploy/oracle/README.md](deploy/oracle/README.md)에 있습니다.
+- **유료**: AWS EC2·Lightsail 같은 다른 Ubuntu 서버. [deploy/aws/README.md](deploy/aws/README.md)
 
 ```bash
-bash deploy/aws/setup-ubuntu.sh lumitwin.내도메인
+SIM_LINK=opcua bash deploy/aws/setup-ubuntu.sh 이름.duckdns.org
 ```
+
+도메인 자리에 `auto`를 넣으면 공인 IP로 `a-b-c-d.sslip.io` 주소를 만듭니다. `SIM_LINK=opcua`는 설비 신호를 OPC UA 경로(가상 PLC → 엣지 게이트웨이 → MQTT)로 보냅니다.
 
 ## 시연 순서
 
@@ -186,6 +191,7 @@ bash deploy/aws/setup-ubuntu.sh lumitwin.내도메인
 | [`tools/whisper/`](tools/whisper) | Python, faster-whisper | 선택: OpenAI 호환 로컬 음성 받아쓰기 서버 |
 | [`deploy/cloudflare/`](deploy/cloudflare) | cloudflared | 무료 공개 링크: 이 PC를 Cloudflare Tunnel로 공개하는 방법(`scripts/tunnel.mjs`)과 보기 전용 설정 |
 | [`deploy/aws/`](deploy/aws) | bash, pm2, Caddy | 상시 서버 한 대 배포: 설치·갱신 스크립트, pm2 프로세스 정의, Caddyfile, 운영용 `.env` 예시 |
+| [`deploy/oracle/`](deploy/oracle) | — | 무료 상시 서버: Oracle Cloud 상시 무료 ARM VM을 만들어 위 스크립트로 올리는 순서 |
 | [`docs/`](docs) | — | [설계 문서](docs/DESIGN.md), [시연 대본](docs/DEMO.md), 공정 리서치 3편, [가상 작업표준서 15건](docs/standards) |
 
 ## 주요 API (`/api/v1`)
@@ -219,6 +225,6 @@ bash deploy/aws/setup-ubuntu.sh lumitwin.내도메인
 ## 다음 단계
 
 - 고정 주소 공개 링크: Cloudflare 계정·도메인으로 이름 붙인 터널 쓰기 (스크립트는 토큰만 넣으면 됨)
-- 늘 켜 둘 링크가 필요하면 상시 서버로 옮기기 (Caddy·pm2 스크립트는 준비됨, Linux에서 아직 돌려 보지 않음)
+- 늘 켜 둘 링크: Oracle 상시 무료 VM에 실제로 올려 보기 (스크립트·안내서는 준비됨, Linux·ARM에서 아직 돌려 보지 않음)
 - OPC UA 경로에 보안 정책(Basic256Sha256 서명·암호화, 인증서) 켜기. 지금은 로컬 시연용으로 SecurityPolicy None·익명 접속
 - 작업자 명령(정지·셋업·재가동)도 OPC UA 메서드로 PLC에 내리기. 지금은 MQTT로 시뮬레이터에 바로 간다
