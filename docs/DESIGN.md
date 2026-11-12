@@ -408,16 +408,18 @@ npm run share = db · server · client · sim (운영 모드) + tunnel
 - 한계: 이 PC가 켜져 있고 잠자기가 아닐 때만 열린다. 면접 시연은 노트북에서 하고, 링크는 미리 보여 주거나 휴대폰·태블릿으로 열 때 쓴다.
 - 확인(2026-11-12): 빠른 터널 주소로 3D 화면과 실시간 값(socket.io), AI 비서 답 스트리밍(첫 바이트 0.25초, 끝 0.49초), 보기 전용(배속·초기화 403, 질문은 통과)을 확인했다. 그날 빠른 터널 만들기가 429·500·시간 초과로 약 30분 막혔고, 스크립트의 다섯 번째 재시도에 열렸다.
 
-### 7.4 상시 서버 (선택, 비용 있음)
+### 7.4 상시 서버 (Oracle 상시 무료, 또는 유료 VM)
 
-늘 켜 둘 링크가 필요하면 Linux 서버 한 대(Ubuntu 24.04, 램 4GB)에 전부 올린다. 스크립트만 준비했고 실제로 올리지는 않았다. 방법은 [`deploy/aws/README.md`](../deploy/aws/README.md).
+PC를 꺼도 열려 있는 링크가 필요하면 Linux 서버 한 대(Ubuntu 24.04, 램 4GB)에 전부 올린다. 무료로는 Oracle Cloud 상시 무료 ARM VM([`deploy/oracle/README.md`](../deploy/oracle/README.md)), 유료로는 AWS 등([`deploy/aws/README.md`](../deploy/aws/README.md))이고 설치 스크립트는 같다. 스크립트와 안내서만 준비했고 실제로 올리지는 않았다.
 
 ```
 인터넷 ─ 80·443 ─▶ Caddy (HTTPS 자동 인증서)
                     ├─ /api/v1/*, /socket.io/* ─▶ MES 서버 127.0.0.1:8790 ─ PostgreSQL 127.0.0.1:5432
                     └─ 그 밖 ─────────────────▶ 화면(Next) 127.0.0.1:5180      ▲ MQTT 127.0.0.1:1884
-                                                                    시뮬레이터 ─┘
-pm2: lumitwin-server · lumitwin-client · lumitwin-sim (+ 선택 lumitwin-whisper, lumitwin-db)
+                                                       엣지 게이트웨이 ─┘ (SIM_LINK=opcua, 아니면 시뮬레이터가 바로)
+                                                              ▲ OPC UA 127.0.0.1:4840
+                                                     시뮬레이터·가상 PLC
+pm2: lumitwin-server · lumitwin-client · lumitwin-sim (+ opcua면 lumitwin-edge, 선택 lumitwin-whisper·lumitwin-db)
 ```
 
 | 결정 | 이유 |
@@ -429,9 +431,14 @@ pm2: lumitwin-server · lumitwin-client · lumitwin-sim (+ 선택 lumitwin-whisp
 | 보기 전용 `READ_ONLY=all` | 서버 전체가 공개되므로 모든 방문자를 보기 전용으로 두고, 설치 스크립트가 제어 키를 만들어 넣는다 |
 | 질문 한도 | 공개 링크에서 Claude 호출 비용이 새지 않게 IP별 시간당(`ASSISTANT_MAX_PER_HOUR`)·서버 전체 하루(`ASSISTANT_MAX_PER_DAY`, 한국 날짜) 한도를 둔다. 모의 모드는 세지 않는다. Caddy 뒤에서 실제 접속 IP를 쓰도록 `trust proxy`를 loopback으로 둔다 |
 | DB 시간대 UTC | Prisma가 UTC로 읽고 쓰고, 시간대별 집계 SQL도 개발용 embedded-postgres와 같게 UTC 기준이다 |
+| 무료는 Oracle 상시 무료 A1 | 상시 프로세스(시뮬레이터·MQTT·Socket.io·PostgreSQL)를 그대로 돌릴 무료 VM이 필요하다. A1은 상시 무료 한도가 2 OCPU · 12GB라 빌드까지 서버 안에서 된다. 1GB짜리 무료 VM(E2.1.Micro)은 화면 빌드가 죽는다 |
+| A1 메모리는 4GB | 7일 동안 CPU(95번째 백분위수)·네트워크·메모리(A1) 사용률이 모두 20% 미만이면 쉬는 인스턴스로 보고 회수할 수 있다. 가상 공장은 CPU가 거의 놀아 메모리로 넘긴다. 상시 1GB 넘게 쓰므로 4GB면 20% 위이고, 12GB를 다 잡으면 아래로 떨어질 수 있다 |
+| 주소는 DuckDNS, 없으면 sslip.io | 태블릿 마이크는 HTTPS에서만 되므로 인증서를 받을 이름이 필요하다. duckdns.org는 Public Suffix List에 있어 이름마다 Let's Encrypt 한도가 따로다. sslip.io(`auto`)는 계정이 없어도 되지만 목록에 없어 모든 사용자가 한도를 나눠 쓴다 |
+| 방화벽 두 겹 | Oracle Ubuntu 이미지는 iptables가 22번 말고는 REJECT로 막는다. 스크립트가 REJECT 줄 바로 앞에 80·443 허용을 넣고 `netfilter-persistent`로 저장한다. 바깥 보안 목록은 콘솔에서 연다 |
+| 구성은 `server/.env`에 | `SIM_LINK`·`SIM_SPEED`·`WHISPER`를 스크립트가 `server/.env`에 적고 pm2 설정이 거기서 읽는다(환경 변수가 먼저). 다시 돌리거나 재부팅해도 같은 프로세스 구성이 뜬다. pm2는 떠 있는 프로세스의 인자를 새로 읽지 않으므로, 값이 바뀌면 `pm2-sync.cjs`가 시뮬레이터·엣지를 내렸다가 새 인자로 띄운다 |
 
-- `setup-ubuntu.sh`는 여러 번 돌려도 되게 썼다(스왑 → 패키지 → Node 22·pm2 → Caddy → DB 사용자 → `server/.env` → 설치·빌드 → Caddy 설정 → pm2 기동·자동 시작). `update.sh`는 서버와 화면만 다시 띄운다. 시뮬레이터를 다시 띄우면 새 실행이 시작되기 때문이다.
-- 로컬에서 운영 빌드(`npm run build`)를 같은 방식(127.0.0.1, `NODE_ENV=production`, `next start`)으로 띄워 화면·API·socket.io·AI 비서 스트리밍이 도는 것을 확인했다. Linux 서버와 Caddy에서는 아직 돌려 보지 않았다.
+- `setup-ubuntu.sh`는 여러 번 돌려도 되게 썼다(스왑 → 패키지 → 방화벽 → Node 22·pm2 → Caddy → DB 사용자 → `server/.env` → 설치·빌드 → Caddy 설정 → pm2 기동·자동 시작). `update.sh`는 서버와 화면만 다시 띄운다. 시뮬레이터를 다시 띄우면 새 실행이 시작되기 때문이다.
+- 로컬에서 운영 빌드(`npm run build`)를 같은 방식(127.0.0.1, `NODE_ENV=production`, `next start`)으로 띄워 화면·API·socket.io·AI 비서 스트리밍이 도는 것을 확인했다. Linux 서버와 Caddy에서는 아직 돌려 보지 않았다. ARM(aarch64)은 네이티브 패키지(SWC, Tailwind oxide, lightningcss, sharp, embedded-postgres)의 linux-arm64 판이 `package-lock.json`에 있는 것까지 확인했다.
 
 ## 8. 단계
 
