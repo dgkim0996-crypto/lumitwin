@@ -15,7 +15,8 @@
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean && node scripts/export-factory.mjs",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch --onSuccess \"node scripts/export-factory.mjs\"",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test \"test/**/*.test.mjs\""
   },
   "devDependencies": {
     "tsup": "^8.5.0",

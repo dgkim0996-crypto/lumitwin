@@ -24,6 +24,7 @@ import {
   SPC_SUBGROUP,
 } from '@lumitwin/shared';
 import { MqttBrokerService, type MqttInbound } from '../mqtt/mqtt-broker.service';
+import { r3, stationOee, type StateTimes } from './oee';
 import { buildSeries, SPC_KEEP_POINTS, type SpcSeries } from './spc';
 
 type Station = StationDef & { line: LineDef['code'] };
@@ -114,7 +115,6 @@ export interface LiveHydration {
   limitAlarms: { station: string; title: string }[];
 }
 
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const limitTitle = (rt: StationRt, tagName: string) => `${rt.def.name} · ${tagName} 규격 이탈`;
 
 /**
@@ -373,22 +373,9 @@ export class LiveService implements OnModuleInit {
     return times;
   }
 
-  /**
-   * OEE = 가동률 × 성능 × 양품률
-   * - 가동률 = 가동 가능 시간(가동·투입 대기·배출 대기) ÷ 계획 시간(전체 − 계획 정지)
-   * - 성능 = 이상 사이클 × 처리 수 ÷ 가동 가능 시간 (투입·배출 대기는 성능 손실로 잡힌다)
-   * - 양품률 = 양품 ÷ 처리 수
-   */
-  private stationOee(rt: StationRt, times: Partial<Record<StationState, number>>): Oee {
-    const sum = (ks: StationState[]) => ks.reduce((a, k) => a + (times[k] ?? 0), 0);
-    const total = sum(['RUN', 'IDLE', 'BLOCKED', 'DOWN', 'SETUP', 'STOP']);
-    const planned = total - (times.STOP ?? 0);
-    const operating = sum(['RUN', 'IDLE', 'BLOCKED']);
-    const count = rt.live.ok + rt.live.ng;
-    const availability = planned > 0 ? operating / planned : 1;
-    const performance = rt.utility ? 1 : operating > 0 ? Math.min(1, (rt.idealSec * count) / operating) : 0;
-    const quality = count > 0 ? rt.live.ok / count : 1;
-    return { availability: r3(availability), performance: r3(performance), quality: r3(quality), oee: r3(availability * performance * quality) };
+  /** OEE 계산식은 oee.ts (테스트가 같은 함수를 확인한다) */
+  private stationOee(rt: StationRt, times: StateTimes): Oee {
+    return stationOee(times, { ok: rt.live.ok, ng: rt.live.ng, idealSec: rt.idealSec, utility: rt.utility });
   }
 
   private lineLive(line: LineRt, stations: Record<string, StationLive>): LineLive {
