@@ -85,7 +85,10 @@ class Mapper:
             return
         vals[key] = float(value)
         ts = _utc(ts)
-        if ts is not None and (code not in self.ts or ts > self.ts[code]):
+        # 태그 묶음의 시각 = 직전 전송 뒤 받은 값 중 가장 늦은 시각.
+        # 지금까지 본 최댓값을 계속 들고 있으면, 시뮬레이터를 초기화해 가상 시계가 되돌아갔을 때
+        # 새 실행 값에 이전 실행 끝 시각이 붙어 나간다 (MES 시계가 몇 시간 앞으로 튄다)
+        if ts is not None and (code not in self.dirty or code not in self.ts or ts > self.ts[code]):
             self.ts[code] = ts
         self.dirty.add(code)
 

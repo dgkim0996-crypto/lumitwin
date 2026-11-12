@@ -1,4 +1,4 @@
-import { DEFECT_NAMES, FACTORY, LINES, STATIONS, type LineCode } from '@lumitwin/shared';
+import { DEFECT_NAMES, FACTORY, LINES, MAINT_MIN_FAILURES, STATIONS, type LineCode } from '@lumitwin/shared';
 import { SUGGESTIONS } from '../assistant.prompt';
 import { toolLabel, type AssistantTools, type ToolOutcome } from '../assistant.tools';
 import type { AssistantProvider, TurnInput } from './provider';
@@ -147,6 +147,11 @@ export class MockProvider implements AssistantProvider {
     if (/로스|손실|loss/i.test(m) || (/oee/i.test(m) && /왜|낮|원인|줄이|개선|어디/.test(m))) {
       const out = await call('six_losses', { line: e.line });
       return out.ok ? lossText(out.data) : out.summary;
+    }
+    // "고장 잦은 설비", "MTBF", "계획 보전 밀린 설비"는 지금 멈춘 설비가 아니라 이력·일정 질문이라 고장 대응보다 먼저 본다
+    if (/보전|\bPM\b|MTBF|MTTR|가용도|수리\s*시간|고장.{0,4}(이력|횟수|건수|잦|많|자주|간격|기록)|(자주|잦은|많이)\s*고장/i.test(m)) {
+      const out = await call('maintenance', { station: e.station, line: e.station ? undefined : e.line });
+      return out.ok ? maintenanceText(out.data) : out.summary;
     }
     if (wantsDown && wantsHow) {
       const ov = await call('factory_overview');
@@ -359,6 +364,58 @@ function lossText(d: Any): string {
       ? `\n\n순간 정지·공회전(${waiting})은 대개 앞 설비가 멈추거나 느려 부품이 안 와서 생깁니다. 그 설비에서 줄일 수 있는 로스는 아래 순위를 보세요.`
       : '';
   return `${d.scope} OEE는 ${d.oeePct}%입니다. 계획 시간 ${n0(d.plannedMin)}분(설비 시간 합) 중 가장 큰 로스는 ${ranked[0][0]} ${ranked[0][1]}%입니다.${hint}\n\n${table}\n\n줄일 곳 (그 설비에서 직접 줄일 수 있는 로스, 잃은 시간 큰 순)\n${list || '아직 없음'}\n\n자세한 구성은 6대 로스 화면(/losses)에서 볼 수 있습니다.`;
+}
+
+/** 분 → '35분' · '12.5시간' */
+const fmtMin = (v: number | null | undefined) => (v == null ? '−' : v >= 120 ? `${(v / 60).toFixed(1)}시간` : `${Math.round(v)}분`);
+
+/** 실적 / 설계와, 설계보다 나쁘면 붙이는 꼬리표 */
+function vsDesign(s: Any): string {
+  const tag = s.fewSamples ? '표본 적음' : [s.frequent && '고장 잦음', s.slowRepair && '수리 오래 걸림'].filter(Boolean).join(' · ');
+  return `MTBF ${fmtMin(s.mtbfMin)}(설계 ${fmtMin(s.designMtbfMin)}) · MTTR ${fmtMin(s.mttrMin)}(설계 ${fmtMin(s.designMttrMin)})${tag ? ` — ${tag}` : ''}`;
+}
+
+function pmLine(p: Any, withStation = true): string {
+  const left = p.status === '보전 중' ? '지금 보전 중' : p.leftH >= 0 ? `${p.leftH}시간 남음` : `${-p.leftH}시간 초과`;
+  return `${withStation ? `${p.station} ${p.stationName}: ` : ''}${p.status}(${left}, 주기 ${p.everyH}시간) — ${p.task}, 표준 ${p.standardMin}분`;
+}
+
+function maintenanceText(d: Any): string {
+  const t = d.totals;
+  const recent = ((d.recentFailures ?? []) as Any[]).map(
+    (f) => `- ${f.t} ${f.station} ${f.reason} ${f.repairing ? `(수리 중, ${fmtMin(f.minutes)}째)` : fmtMin(f.minutes)}${f.byOperator ? ' · 작업자 등록' : ''}`,
+  );
+  const link = '\n\n고장 이력과 계획 보전 일정은 설비 보전 화면(/maintenance)에서 볼 수 있습니다.';
+  if (d.station) {
+    const s = d.station;
+    const head = s.failures
+      ? `${josa(d.scope, ['은', '는'])} 이번 실행에 고장 ${s.failures}건, 고장 시간 ${fmtMin(s.downMin)}입니다${s.downNow ? '. 지금 고장 중입니다' : ''}.\n\n${vsDesign(s)} · 가용도 ${s.availabilityPct ?? '−'}%`
+      : `${josa(d.scope, ['은', '는'])} 이번 실행에 아직 고장이 없습니다(설계 MTBF ${fmtMin(s.designMtbfMin)}).`;
+    const few = s.failures && s.fewSamples ? `\n고장이 ${s.failures}건뿐이라 MTBF·MTTR 실적은 아직 믿기 어렵습니다.` : '';
+    const check = s.lastCheck ? `\n\n작업 전 점검(${s.lastCheck.t}): ${s.lastCheck.ngItems ? `이상 ${s.lastCheck.ngItems}건` : '이상 없음'}` : '\n\n이번 실행에는 작업 전 점검 기록이 없습니다.';
+    return `${head}${few}\n\n계획 보전: ${pmLine(s.pm, false)}, 마지막 ${s.pm.last}${check}${recent.length ? `\n\n최근 고장\n${recent.slice(0, 5).join('\n')}` : ''}${link}`;
+  }
+  const head = t.failures
+    ? `${d.scope} 고장은 이번 실행에 ${t.failures}건, 고장 시간 합 ${fmtMin(t.downMin)}입니다. MTBF ${fmtMin(t.mtbfMin)}(설비 가동 시간 합 ÷ 고장 수) · MTTR ${fmtMin(t.mttrMin)} · 가용도 ${t.availabilityPct ?? '−'}%${t.downNow ? ` · 지금 고장 ${t.downNow}대` : ''}.`
+    : `${d.scope}에는 이번 실행에 아직 고장이 없습니다.`;
+  const worst = ((d.worstStations ?? []) as Any[]).slice(0, 5);
+  const table = worst.length
+    ? `\n\n고장 시간이 큰 설비\n\n| 설비 | 고장 | 고장 시간 | 실적 / 설계 |\n|---|---|---|---|\n${worst.map((s) => `| ${s.station} ${s.stationName} | ${s.failures} | ${fmtMin(s.downMin)} | ${vsDesign(s)} |`).join('\n')}`
+    : '';
+  const flagged = worst.filter((s) => s.frequent || s.slowRepair);
+  const verdict = flagged.length
+    ? `\n\n설계보다 나쁜 설비: ${flagged.map((s) => `${s.station}(${[s.frequent && '고장 잦음', s.slowRepair && '수리 오래 걸림'].filter(Boolean).join('·')})`).join(', ')}. 고장 사유와 작업 전 점검 기록부터 확인하세요.`
+    : worst.length && worst.every((s) => s.fewSamples)
+      ? `\n\n아직 설비마다 고장이 ${MAINT_MIN_FAILURES}건 미만이라 MTBF·MTTR 실적은 참고만 하세요.`
+      : '';
+  const urgent = (d.pmUrgent ?? []) as Any[];
+  const pm = urgent.length ? `\n\n계획 보전이 급한 설비\n${urgent.slice(0, 5).map((p) => `- ${pmLine(p)}`).join('\n')}` : '\n\n계획 보전 주기를 넘기거나 임박한 설비는 없습니다.';
+  const reasons = ((d.reasons ?? []) as Any[]).slice(0, 3);
+  const shared = reasons.find((r) => r.stations.length >= 2);
+  const reasonLine = reasons.length
+    ? `\n\n시간이 큰 고장 사유: ${reasons.map((r) => `${r.reason} ${r.count}건·${fmtMin(r.minutes)}`).join(', ')}${shared ? `. ${josa(shared.reason, ['은', '는'])} 설비 ${shared.stations.length}대에서 났으니 공통 원인(공압·전원·같은 부품)을 먼저 의심하세요` : ''}.`
+    : '';
+  return `${head}${table}${verdict}${pm}${reasonLine}${link}`;
 }
 
 function factorsText(d: Any): string {

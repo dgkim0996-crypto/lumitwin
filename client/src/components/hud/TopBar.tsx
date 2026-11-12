@@ -212,6 +212,8 @@ export function TopBar() {
   const path = usePathname();
   const router = useRouter();
   const elapsed = sim ? (Date.parse(sim.t) - Date.parse(sim.startedAt)) / 1000 : 0;
+  const paused = sim?.running === false;
+  const pauseLabel = paused ? '재개' : '일시정지';
   const home = () => {
     goHome();
     if (path !== '/') router.push('/');
@@ -220,7 +222,8 @@ export function TopBar() {
   return (
     // .panel의 backdrop-filter가 쌓임 맥락을 만들므로, 드롭다운이 아래 패널 위로 오도록 헤더 자체를 올린다
     // 1024px 폭에서도 한 줄에 들어가도록 xl 미만에서는 간격·버튼 폭·글자를 줄이고,
-    // 버튼 앞 글자·연결 점 글자·넓은 배속 버튼은 2xl(1536px), 경과 시간은 1680px부터 보인다 (1280~1536px에서 넘치던 것)
+    // 버튼 앞 글자·연결 점 글자·넓은 배속 버튼·LumiTwin 글자는 2xl(1536px), 경과 시간은 1680px부터 보인다 (1280~1536px에서 넘치던 것).
+    // 일시정지·초기화는 xl 미만에서 아이콘만 보인다 (메뉴가 8개라 1024px에서 자리가 모자란다)
     <header className="panel pointer-events-auto relative z-30 flex h-12 shrink-0 items-center gap-2 px-3 xl:gap-4 xl:px-4">
       <button onClick={home} className="flex shrink-0 items-center gap-2" title={`${FACTORY.site} · 가상 램프·전장 공장 — 공장 전체 보기`}>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -228,7 +231,7 @@ export function TopBar() {
           <path d="M14 14h6M14 18h6M14 10h6" stroke="#4fb3ff" strokeWidth="2" strokeLinecap="round" />
           <circle cx="7" cy="17" r="3" stroke="#7ee0a1" strokeWidth="2" />
         </svg>
-        <span className="hidden font-semibold tracking-tight xl:inline">LumiTwin</span>
+        <span className="hidden font-semibold tracking-tight 2xl:inline">LumiTwin</span>
       </button>
 
       <NavTabs />
@@ -252,21 +255,31 @@ export function TopBar() {
             </button>
           ))}
         </div>
+        {/* xl 미만에서는 아이콘만 (글자는 title·aria-label로) */}
         <button
           disabled={!simConnected || readOnly}
-          title={lock}
+          title={lock ?? pauseLabel}
+          aria-label={pauseLabel}
           onClick={() => send.mutate({ action: sim?.running ? 'pause' : 'resume' })}
-          className="h-8 w-16 rounded-md border border-line bg-white/5 text-sm hover:bg-white/10 disabled:opacity-40"
+          className="flex h-8 w-8 items-center justify-center rounded-md border border-line bg-white/5 text-sm hover:bg-white/10 disabled:opacity-40 xl:w-16"
         >
-          {sim?.running === false ? '재개' : '일시정지'}
+          <svg width="14" height="14" viewBox="0 0 24 24" className="xl:hidden" aria-hidden>
+            {paused ? <path d="M7 4.5v15l12-7.5-12-7.5Z" fill="currentColor" /> : <path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" />}
+          </svg>
+          <span className="hidden xl:inline">{pauseLabel}</span>
         </button>
         <button
           disabled={!simConnected || readOnly}
-          title={lock}
+          title={lock ?? '초기화'}
+          aria-label="초기화"
           onClick={() => confirm('시뮬레이션을 처음부터 다시 시작할까요? 진행 중인 시나리오와 집계가 초기화됩니다.') && send.mutate({ action: 'reset' })}
-          className="h-8 rounded-md border border-line bg-white/5 px-2 text-sm hover:bg-white/10 disabled:opacity-40 xl:px-3"
+          className="flex h-8 w-8 items-center justify-center rounded-md border border-line bg-white/5 text-sm hover:bg-white/10 disabled:opacity-40 xl:w-auto xl:px-3"
         >
-          초기화
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" className="xl:hidden" aria-hidden>
+            <path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <path d="M4.5 3.5v4h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span className="hidden xl:inline">초기화</span>
         </button>
         <ScenarioMenu />
         <AccessBadge />

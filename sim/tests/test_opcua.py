@@ -52,6 +52,17 @@ class MapperRules(unittest.TestCase):
         self.assertEqual(msg, {'t': '2026-11-12T00:00:11.000Z', 'v': {'moldTemp': 61.2, 'pressure': 82.0}, 's': 'DOWN', 'r': '밴드 히터 단선'})
         self.assertEqual(m.flush(), [], '바뀐 것이 없으면 다시 보내지 않는다')
 
+    def test_tags_time_follows_clock_back_after_sim_reset(self):
+        m = Mapper()
+        m.add_station('HL', 'A')
+        m.on_value('A', 'x', 1.0, at(50_000), True)  # 이전 실행: 가상 시계가 14시간째
+        m.flush()
+        # 초기화: 새 실행의 가상 시계는 처음으로 돌아간다. OPC UA 연결은 그대로라 Mapper도 그대로다
+        m.on_value('A', 'x', 2.0, at(10), True)
+        m.on_value('A', 'y', 3.0, at(12), True)
+        m.on_value('A', 'x', 2.5, at(11), True)  # 같은 묶음 안에서는 가장 늦은 시각
+        self.assertEqual(m.flush()[0][1]['t'], '2026-11-12T00:00:12.000Z')
+
     def test_bad_quality_value_is_not_sent(self):
         m = Mapper()
         m.add_station('HL', 'A')
