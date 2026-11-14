@@ -98,6 +98,7 @@ const PAGES = [
   ['/audit', '감사'],
   ['/operator', '작업자'],
   ['/operator/HL-AS-01', 'HL-AS-01'],
+  ['/tbm', 'TBM 점검'],
   ['/login', '로그인'],
 ];
 suite(
@@ -292,6 +293,110 @@ suite('execution', [
       const l = a.body?.rows ?? [];
       t.expect(l.some((x) => /^wo./.test(x.action)), '작업지시 기록 없음');
       t.expect(l.some((x) => /hold/.test(x.action)), 'Hold 기록 없음');
+    },
+  },
+]);
+
+// ─────────────── TBM 대조 (모의 판정 기준: ASSISTANT_PROVIDER가 mock이거나 키가 없을 때) ───────────────
+const tbmState = { id: null };
+/** 회의 상세에서 항목 하나의 상태 */
+const itemStatus = (t, code) => t.eval(`document.querySelector('[data-testid=tbm-item][data-code=${code}]')?.dataset.status ?? null`);
+suite('tbm', [
+  {
+    name: '작업자가 예시 대화록을 올리면 항목별 판정이 나온다',
+    async run(t) {
+      await t.login('op1');
+      await t.goto('/tbm', 3000);
+      const items = await t.waitFor(() => t.eval(`document.body.innerText.includes('오늘 체크리스트') && /원청/.test(document.body.innerText)`), '체크리스트 표시', 15_000);
+      t.expect(items, '체크리스트가 안 보임');
+      await t.click('예시 대화록으로 해 보기');
+      await t.waitFor(() => t.eval(`!!document.querySelector('[data-testid=tbm-submit]')`), '올리기 버튼', 10_000);
+      t.expect((await t.disabled('올리고 대조하기')) === false, '작업자인데 올리기 버튼이 막혀 있음');
+      await t.click('올리고 대조하기');
+      const id = await t.waitFor(
+        () => t.eval(`(() => { const d = document.querySelector('[data-testid=tbm-detail]'); return d?.dataset.status === 'DONE' ? Number(d.dataset.id) : null; })()`),
+        '대조 끝 (DONE)',
+        60_000,
+      );
+      tbmState.id = id;
+      const mode = await t.eval(`document.querySelector('[data-testid=mode-badge]')?.dataset.mode ?? null`);
+      t.expect(mode, '판정 방식 배지가 안 보임');
+      if (mode === 'mock') {
+        // 예시 대화록은 비상 대피·건강 상태·Hold 공유를 일부러 빠뜨렸다
+        for (const code of ['EMERGENCY', 'HEALTH', 'HOLD_SHARE']) t.expect((await itemStatus(t, code)) === 'MISSING', `${code}가 '안 다룸'이 아님: ${await itemStatus(t, code)}`);
+        t.expect((await itemStatus(t, 'PPE')) === 'COVERED', `PPE가 '다룸'이 아님: ${await itemStatus(t, 'PPE')}`);
+      }
+      // 판정기에게 지시하는 줄은 전사에 표시되고 근거로 쓰이지 않는다
+      const flagged = await t.eval(`document.querySelector('[data-testid=tbm-transcript]')?.innerText.includes('근거로 쓰지 않음') ?? false`);
+      t.expect(flagged, '지시문 의심 줄 표시가 없음');
+      t.expect((await itemStatus(t, 'EMERGENCY')) !== 'COVERED', '주입 줄 때문에 비상 대피가 다룸이 됨');
+    },
+  },
+  {
+    name: '작업자는 보완·확인을 못 한다 (403)',
+    async run(t) {
+      t.expect(tbmState.id, '앞 시험에서 올린 회의가 없음');
+      await t.login('op1');
+      t.expect((await t.disabled('조장 보완·확인')) === true, '작업자인데 보완·확인 버튼이 열려 있음');
+      const r = await t.api(`/tbm/meetings/${tbmState.id}/follow-ups`, { method: 'POST', body: JSON.stringify({ code: 'EMERGENCY', kind: 'SUPPLEMENTED', note: 'E2E' }) });
+      t.expect(r.status === 403, `기대 403, 받은 ${r.status}`);
+    },
+  },
+  {
+    name: '조장이 빠진 항목을 보완 체크하면 감사 기록에 남는다',
+    async run(t) {
+      t.expect(tbmState.id, '앞 시험에서 올린 회의가 없음');
+      await t.login('lead1');
+      await t.goto('/tbm', 3000);
+      await t.waitFor(() => t.eval(`document.querySelector('[data-testid=tbm-detail]')?.dataset.id === '${tbmState.id}'`), '방금 올린 회의 상세', 15_000);
+      // 안 다룸을 '확인'으로 닫으려면 이유가 필요하다 → 메모를 쓰고 '보완 전달함'
+      const opened = await t.eval(`(() => {
+        const li = document.querySelector('[data-testid=tbm-item][data-code=EMERGENCY]');
+        const b = li && [...li.querySelectorAll('button')].find((e) => e.innerText.includes('조장 보완·확인'));
+        if (!b) return false;
+        b.click();
+        return true;
+      })()`);
+      t.expect(opened, '비상 대피 항목의 보완·확인 버튼을 못 찾음');
+      await sleep(400);
+      const sent = await t.eval(`(() => {
+        const li = document.querySelector('[data-testid=tbm-item][data-code=EMERGENCY]');
+        const input = li?.querySelector('input');
+        if (!input) return false;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'E2E 시험: 비상구 위치를 작업자에게 따로 알림');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      })()`);
+      t.expect(sent, '메모 칸을 못 찾음');
+      await sleep(200);
+      await t.eval(`[...document.querySelector('[data-testid=tbm-item][data-code=EMERGENCY]').querySelectorAll('button')].find((e) => e.innerText.includes('보완 전달함')).click()`);
+      const done = await t.waitFor(() => t.eval(`document.querySelector('[data-testid=tbm-item][data-code=EMERGENCY] [data-testid=tbm-followup]')?.innerText ?? null`), '보완 기록 표시', 10_000);
+      t.expect(/보완/.test(done) && /조장/.test(done), `보완 표시: ${done}`);
+      // 안 다룸을 이유 없이 '확인'으로 닫을 수는 없다
+      const bare = await t.api(`/tbm/meetings/${tbmState.id}/follow-ups`, { method: 'POST', body: JSON.stringify({ code: 'HEALTH', kind: 'CONFIRMED' }) });
+      t.expect(bare.status === 400, `이유 없는 확인: 기대 400, 받은 ${bare.status}`);
+      // 이미 다룬 항목에는 후속 조치를 남기지 않는다
+      const covered = await t.eval(`document.querySelector('[data-testid=tbm-item][data-status=COVERED]')?.dataset.code ?? null`);
+      if (covered) {
+        const r = await t.api(`/tbm/meetings/${tbmState.id}/follow-ups`, { method: 'POST', body: JSON.stringify({ code: covered, kind: 'CONFIRMED', note: 'E2E' }) });
+        t.expect(r.status === 400, `다룬 항목 후속 조치: 기대 400, 받은 ${r.status}`);
+      }
+      await t.login('admin');
+      const a = await t.api('/audit?limit=50');
+      const rows = a.body?.rows ?? [];
+      t.expect(rows.some((x) => x.action === 'tbm.upload'), 'tbm.upload 감사 기록 없음');
+      t.expect(rows.some((x) => x.action === 'tbm.followup'), 'tbm.followup 감사 기록 없음');
+    },
+  },
+  {
+    name: '비서가 TBM 결과를 조회한다',
+    async run(t) {
+      await t.login('lead1');
+      const info = await t.api('/assistant/info');
+      if (info.body?.mode !== 'mock') return; // 실제 모델은 답이 매번 달라 모의 모드에서만 본다
+      const r = await t.eval(`fetch('/api/v1/assistant/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: '오늘 TBM에서 빠진 항목 있어?', context: { page: '/tbm' } }) }).then((r) => r.text())`);
+      t.expect(/tbm_status/.test(r), '비서가 tbm_status 도구를 안 씀');
+      t.expect(/안 다룸|불확실|확인 필요/.test(r), `비서 답에 TBM 결과가 없음: ${r.slice(0, 200)}`);
     },
   },
 ]);

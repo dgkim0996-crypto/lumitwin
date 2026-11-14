@@ -478,7 +478,7 @@ async function ask(provider: MockProvider, message: string): Promise<string> {
   const emit = (e: AssistantEvent) => {
     if (e.type === 'text') text += e.delta;
   };
-  const conv = { id: 't', createdAt: 0, updatedAt: 0, busy: false, messages: [], memo: {} };
+  const conv = { id: 't', createdAt: 0, updatedAt: 0, busy: false, messages: [], oai: [], memo: {} };
   await provider.run({ conv, message, context: {}, emit, signal: new AbortController().signal }).catch(() => undefined);
   return text;
 }

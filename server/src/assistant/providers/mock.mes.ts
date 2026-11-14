@@ -26,6 +26,7 @@ export const MES_HELP = [
   '칩 마운터 진동 괜찮아?',
   '어제 야간 교대 실적 요약해 줘',
   '이번 교대 전력 제일 많이 쓴 설비는?',
+  '오늘 TBM에서 빠진 항목 있어?',
 ];
 
 /**
@@ -35,6 +36,12 @@ export const MES_HELP = [
  */
 export async function mesAnswer(m: string, e: MesEntities, call: Call, wantsHow: boolean): Promise<string | null> {
   const has = (re: RegExp) => re.test(m);
+
+  // TBM 회의 대조 ("TBM에서 Hold 공유 빠졌어?"가 Hold 규칙으로 가지 않게 먼저 본다. "TBM 하는 방법"은 작업표준서로)
+  if (has(/TBM|티비엠|툴\s*박스|안전\s*회의|아침\s*회의|작업\s*전\s*회의/i) && (!wantsHow || has(/빠|놓|안\s*다|결과|대조|확인|미흡/))) {
+    const out = await call('tbm_status', { line: e.line });
+    return out.ok ? tbmText(out.data) : out.summary;
+  }
 
   // Hold·격리 ("LOT 격리 방법"처럼 절차를 묻는 것은 작업표준서로 넘긴다)
   if (e.hold || has(/hold|홀드/i) || (has(/격리/) && !wantsHow)) {
@@ -123,6 +130,29 @@ export async function mesAnswer(m: string, e: MesEntities, call: Call, wantsHow:
 }
 
 // ───────────── 답 틀 ─────────────
+
+function tbmText(d: Any): string {
+  const by: Record<string, string> = { claude: 'Claude', local: '로컬 LLM', mock: '모의 규칙' };
+  const rows: string[] = [];
+  for (const x of d.meetings ?? []) {
+    if (!x.meeting) {
+      rows.push(`- ${x.lineName}: 올린 TBM 회의가 없습니다`);
+      continue;
+    }
+    const mt = x.meeting;
+    const c = mt.counts;
+    if (mt.status !== '완료') {
+      rows.push(`- ${x.lineName} · 회의 #${mt.id} (${mt.shift}): ${mt.status}${mt.error ? ` — ${mt.error}` : ''}`);
+      continue;
+    }
+    rows.push(`- ${x.lineName} · 회의 #${mt.id} (${mt.shift}, ${mt.createdBy ?? '−'}, 판정 ${by[mt.judgedBy] ?? mt.judgedBy}): 다룸 ${c.covered} · 부분 ${c.partial} · 안 다룸 ${c.missing} · 불확실 ${c.uncertain}, 확인 필요 ${mt.open}항목`);
+    for (const st of ['안 다룸', '불확실', '부분']) {
+      const items = (x.notCovered ?? []).filter((i: Any) => i.status === st);
+      if (items.length) rows.push(`  · ${st}: ${items.map((i: Any) => `${i.title}${i.followUp ? ` [${i.followUp}]` : ''}`).join(', ')}`);
+    }
+  }
+  return `TBM 체크리스트 대조 결과입니다.\n\n${rows.join('\n')}\n\n불확실은 판정기가 다뤘다고 했지만 근거 줄을 확인하지 못한 항목이라 사람이 확인해야 합니다. 빠진 항목의 보완 전달·확인 체크는 /tbm 에서 조장이 하고 감사 기록이 남습니다.`;
+}
 
 const n0 = (v: number | null | undefined) => (v == null ? '−' : v.toLocaleString('ko-KR'));
 /** 분 → '35분' · '3시간 5분' */

@@ -2,13 +2,14 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { AssistantUsage } from '@lumitwin/shared';
 import { TOOL_DEFS, toolLabel, type AssistantTools } from '../assistant.tools';
 import { turnContext } from '../assistant.prompt';
+import type { Effort } from '../llm.settings';
 import type { AssistantProvider, TurnInput } from './provider';
 
 /** 한 질문에서 모델을 부르는 최대 횟수. 마지막 번에는 도구를 끄고 지금까지 모은 것으로 답하게 한다 */
 const MAX_STEPS = 6;
 const MAX_TOKENS = 16_000;
 
-export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type { Effort } from '../llm.settings';
 
 /**
  * Claude API로 답한다. 도구 호출 루프는 직접 돌린다: 도구 호출·결과를 화면에 실시간으로 보여 주고,

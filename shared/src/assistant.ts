@@ -1,7 +1,12 @@
 // AI 현장 비서: 서버 ↔ 화면 사이의 주고받는 모양
 
-/** claude = Claude API로 답한다 · mock = 키 없이 규칙으로 도구를 골라 답한다(같은 도구, 같은 데이터) */
-export type AssistantMode = 'claude' | 'mock';
+/**
+ * claude = Claude API로 답한다 · local = 사내에서 띄운 오픈소스 LLM(OpenAI 호환 서버: LM Studio·Ollama 등)으로 답한다
+ * mock = 키 없이 규칙으로 도구를 골라 답한다. 셋 다 같은 도구로 같은 공장 데이터를 조회한다
+ */
+export type AssistantMode = 'claude' | 'local' | 'mock';
+
+export const ASSISTANT_MODE_NAMES: Record<AssistantMode, string> = { claude: 'Claude', local: '로컬 LLM', mock: '모의 모드' };
 
 /** 답에서 화면의 다른 곳으로 이어지는 링크 */
 export interface AssistantRef {
@@ -39,6 +44,10 @@ export interface AssistantUsage {
 export interface AssistantInfo {
   mode: AssistantMode;
   model: string | null;
+  /** 질문과 조회한 공장 데이터가 이 서버 밖(외부 API)으로 나가는가. Claude만 true, 로컬 LLM·모의 모드는 false */
+  external: boolean;
+  /** 로컬 LLM 서버 주소의 호스트:포트 (로컬 모드만). 화면에 어디서 도는지 보여 준다 */
+  endpoint: string | null;
   /** 서버에 Whisper(OpenAI 호환 받아쓰기) 서버가 연결돼 있는지 */
   stt: { enabled: boolean; model: string | null };
   standards: number;

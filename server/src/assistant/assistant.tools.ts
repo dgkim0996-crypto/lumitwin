@@ -31,10 +31,10 @@ import { StandardsIndex } from './standards.index';
 export { STATE_NAMES, kst, resolveStation } from './assistant.common';
 export type { ToolOutcome } from './assistant.common';
 
-const ALARM_KINDS = ['DOWN', 'LIMIT', 'QUALITY', 'SPC', 'CHECK', 'INTERLOCK', 'NCR', 'HOLD', 'FA', 'PDM', 'CHANGE', 'WO'] as const;
+const ALARM_KINDS = ['DOWN', 'LIMIT', 'QUALITY', 'SPC', 'CHECK', 'INTERLOCK', 'NCR', 'HOLD', 'FA', 'PDM', 'CHANGE', 'WO', 'TBM'] as const;
 export const ALARM_KIND_NAMES: Record<string, string> = {
   DOWN: '고장', LIMIT: '공정값 이탈', QUALITY: '불량률 상승', SPC: 'SPC 이상', CHECK: '작업 전 점검 이상', SCENARIO: '시나리오',
-  INTERLOCK: '인터록 거부', NCR: '불량 처리(MRB) 대기', HOLD: 'Hold', FA: '초물·중물·종물 불합격', PDM: '예지 보전(진동)', CHANGE: '4M 변경점 신고', WO: '작업지시·생산 계획',
+  INTERLOCK: '인터록 거부', NCR: '불량 처리(MRB) 대기', HOLD: 'Hold', FA: '초물·중물·종물 불합격', PDM: '예지 보전(진동)', CHANGE: '4M 변경점 신고', WO: '작업지시·생산 계획', TBM: 'TBM 미흡',
 };
 const MATERIALS = new Map(FACTORY.materials.map((m) => [m.code, m]));
 /** 같은 자재의 다른 LOT 대비 편중 판정 (추적 화면과 같은 기준) */

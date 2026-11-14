@@ -8,4 +8,5 @@ export * from './execution';
 export * from './quality-system';
 export * from './control-plan';
 export * from './insights';
+export * from './tbm';
 export { FACTORY, LINES, STATIONS, DEFECT_NAMES } from './factory';

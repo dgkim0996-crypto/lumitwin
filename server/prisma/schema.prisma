@@ -381,3 +381,65 @@ model ActionLog {
   @@index([user, at])
   @@map("action_log")
 }
+
+/// TBM(작업 전 안전 회의) 녹음·대화록을 체크리스트와 대조한 기록 (P10).
+/// 실행(sim_run)이 바뀌어도 남긴다: 회의 기록은 공장 시뮬레이션이 아니라 사람이 올린 것이다
+model TbmMeeting {
+  id         Int       @id @default(autoincrement())
+  /// 올릴 때의 시뮬레이터 실행 (없으면 null)
+  runId      Int?      @map("run_id")
+  line       String
+  /// 교대 키 2026-11-14-D
+  shift      String
+  /// TEXT · AUDIO
+  input      String
+  fileName   String?   @map("file_name")
+  /// TRANSCRIBING · ANALYZING · DONE · FAILED
+  status     String
+  error      String?
+  /// 판정 방식 claude · local · mock
+  mode       String
+  model      String?
+  createdBy  String?   @map("created_by")
+  /// 실제 시각
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// 가상 시각 (올릴 때 공장 시계)
+  vAt        DateTime? @map("v_at") @db.Timestamptz(3)
+  analyzedAt DateTime? @map("analyzed_at") @db.Timestamptz(3)
+  ms         Int?
+  /// 대조한 체크리스트 (고정 항목 + 그날 MES 자동 항목) 그대로
+  checklist  Json      @default("[]")
+  /// 전사 줄 [{n, text, suspicious?}]
+  lines      Json      @default("[]")
+  /// 항목별 판정 결과 (검증기를 거친 것)
+  items      Json      @default("[]")
+  /// 검증기가 버리거나 고친 것
+  changes    String[]  @default([])
+  chunks     Int       @default(0)
+  covered    Int       @default(0)
+  partial    Int       @default(0)
+  missing    Int       @default(0)
+  uncertain  Int       @default(0)
+  /// 안 다룸·불확실 때문에 알람을 올렸는가
+  alarmed    Boolean   @default(false)
+
+  @@index([line, createdAt])
+  @@map("tbm_meeting")
+}
+
+/// TBM에서 빠진 항목에 조장이 한 후속 조치 (항목마다 하나, 다시 하면 고친다)
+model TbmFollowUp {
+  id        Int       @id @default(autoincrement())
+  meetingId Int       @map("meeting_id")
+  code      String
+  /// SUPPLEMENTED 보완 전달 · CONFIRMED 확인(해당 없음·실제 다룸)
+  kind      String
+  note      String?
+  by        String
+  role      String
+  at        DateTime  @default(now()) @db.Timestamptz(3)
+  vAt       DateTime? @map("v_at") @db.Timestamptz(3)
+
+  @@unique([meetingId, code])
+  @@map("tbm_followup")
+}
