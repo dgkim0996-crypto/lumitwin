@@ -5,16 +5,17 @@ import { usePathname, useRouter } from 'next/navigation';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { AccessBadge } from '@/components/hud/AccessBadge';
 import { NavTabs } from '@/components/nav/NavTabs';
-import { FACTORY, LINES, SIM_SPEEDS, type SimCommand } from '@lumitwin/shared';
-import { READ_ONLY_TITLE, useAccess } from '@/lib/access';
+import { UserMenu } from '@/components/auth/UserMenu';
+import { FACTORY, LINES, SIM_SPEEDS, type SimControlCommand } from '@lumitwin/shared';
 import { simCommand } from '@/lib/api';
+import { useGate } from '@/lib/auth';
 import { cx, duration, kst } from '@/lib/format';
 import { useAssistant } from '@/lib/assistant';
 import { useLive } from '@/lib/live';
 import { useUi } from '@/lib/ui';
 
-function useSim() {
-  return useMutation({ mutationFn: (cmd: SimCommand) => simCommand(cmd) });
+function useSim(onError?: (e: Error) => void) {
+  return useMutation({ mutationFn: (cmd: SimControlCommand) => simCommand(cmd), onError });
 }
 
 function Dot({ on, label }: { on: boolean; label: string }) {
@@ -32,7 +33,8 @@ function ScenarioMenu() {
   const [open, setOpen] = useState(false);
   const sim = useLive((s) => s.sim);
   const send = useSim();
-  const { readOnly } = useAccess();
+  // 배속·일시정지·초기화·시나리오는 시뮬레이터 제어 권한 (공개 링크 보기 전용이 먼저)
+  const gate = useGate('sim.control');
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const close = (e: MouseEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
@@ -52,7 +54,7 @@ function ScenarioMenu() {
         <div className="panel scroll-thin absolute right-0 top-10 z-50 max-h-[70vh] w-[440px] overflow-y-auto p-3">
           <p className="mb-2 text-xs leading-relaxed text-sub">
             설비 상태를 서서히 바꿔 불량이 생기게 합니다. 증상(알람·불량·SPC)을 보고 원인 설비를 찾아가는 시연용입니다.
-            {readOnly && <span className="text-warn"> 공개 링크에서는 켜고 끌 수 없습니다.</span>}
+            {!gate.ok && <span className="text-warn"> {gate.readOnly ? '공개 링크에서는 켜고 끌 수 없습니다.' : gate.title}</span>}
           </p>
           {LINES.map((l) => (
             <div key={l.code} className="mb-2">
@@ -68,8 +70,8 @@ function ScenarioMenu() {
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-sm font-medium">{s.name}</div>
                         <button
-                          disabled={send.isPending || readOnly}
-                          title={readOnly ? READ_ONLY_TITLE : undefined}
+                          disabled={send.isPending || !gate.ok}
+                          title={gate.title}
                           onClick={() => send.mutate({ action: 'scenario', id: s.id, on: !a })}
                           className={cx('shrink-0 rounded px-2 py-0.5 text-xs disabled:opacity-40', a ? 'bg-warn text-black' : 'bg-white/10 hover:bg-white/20')}
                         >
@@ -206,9 +208,11 @@ export function TopBar() {
   const socket = useLive((s) => s.socket);
   const simConnected = useLive((s) => s.simConnected);
   const goHome = useLive((s) => s.goHome);
-  const send = useSim();
-  const { readOnly } = useAccess();
-  const lock = readOnly ? READ_ONLY_TITLE : undefined;
+  // 서버가 거절한 이유(로그인 필요·권한 없음 등)를 버튼 밑에 잠깐 보여 준다
+  const [flash, setFlash] = useState<string | null>(null);
+  const send = useSim((e) => setFlash(e.message));
+  const gate = useGate('sim.control');
+  const lock = gate.title;
   const path = usePathname();
   const router = useRouter();
   const elapsed = sim ? (Date.parse(sim.t) - Date.parse(sim.startedAt)) / 1000 : 0;
@@ -218,6 +222,11 @@ export function TopBar() {
     goHome();
     if (path !== '/') router.push('/');
   };
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 5000);
+    return () => clearTimeout(t);
+  }, [flash]);
 
   return (
     // .panel의 backdrop-filter가 쌓임 맥락을 만들므로, 드롭다운이 아래 패널 위로 오도록 헤더 자체를 올린다
@@ -246,10 +255,10 @@ export function TopBar() {
           {SIM_SPEEDS.map((v) => (
             <button
               key={v}
-              disabled={!simConnected || send.isPending || readOnly}
+              disabled={!simConnected || send.isPending || !gate.ok}
               title={lock}
               onClick={() => send.mutate({ action: 'speed', speed: v })}
-              className={cx('num h-8 w-8 text-sm 2xl:w-11', sim?.speed === v ? 'bg-info/25 text-info' : 'hover:bg-white/10', (!simConnected || readOnly) && 'opacity-40')}
+              className={cx('num h-8 w-8 text-sm 2xl:w-11', sim?.speed === v ? 'bg-info/25 text-info' : 'hover:bg-white/10', (!simConnected || !gate.ok) && 'opacity-40')}
             >
               {v}×
             </button>
@@ -257,7 +266,7 @@ export function TopBar() {
         </div>
         {/* xl 미만에서는 아이콘만 (글자는 title·aria-label로) */}
         <button
-          disabled={!simConnected || readOnly}
+          disabled={!simConnected || !gate.ok}
           title={lock ?? pauseLabel}
           aria-label={pauseLabel}
           onClick={() => send.mutate({ action: sim?.running ? 'pause' : 'resume' })}
@@ -269,7 +278,7 @@ export function TopBar() {
           <span className="hidden xl:inline">{pauseLabel}</span>
         </button>
         <button
-          disabled={!simConnected || readOnly}
+          disabled={!simConnected || !gate.ok}
           title={lock ?? '초기화'}
           aria-label="초기화"
           onClick={() => confirm('시뮬레이션을 처음부터 다시 시작할까요? 진행 중인 시나리오와 집계가 초기화됩니다.') && send.mutate({ action: 'reset' })}
@@ -281,8 +290,14 @@ export function TopBar() {
           </svg>
           <span className="hidden xl:inline">초기화</span>
         </button>
+        {flash && (
+          <div role="alert" className="panel absolute right-3 top-14 z-50 max-w-[360px] whitespace-normal px-3 py-2 text-xs text-down">
+            {flash}
+          </div>
+        )}
         <ScenarioMenu />
         <AccessBadge />
+        <UserMenu />
         <AssistantButton />
         <div className="ml-1 flex items-center gap-2 border-l border-line pl-2 xl:ml-2 xl:gap-3 xl:pl-3">
           <Dot on={socket} label="MES" />

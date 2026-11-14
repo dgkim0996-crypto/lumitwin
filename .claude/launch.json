@@ -14,6 +14,12 @@
       "port": 5180
     },
     {
+      "name": "all-built",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 5180
+    },
+    {
       "name": "all-opcua",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:opcua"],

@@ -49,7 +49,7 @@ PC를 꺼 두어도 링크가 열리고, 무료 한도 안에서만 쓰면 요�
 - 네트워크 사용률이 20% 미만
 - 메모리 사용률이 20% 미만 (A1만 해당)
 
-가상 공장은 쉬지 않고 돌지만 CPU는 거의 놀고 방문자도 드물어, CPU·네트워크는 20%를 넘기 어렵습니다. 그래서 **메모리**로 20%를 넘깁니다. LumiTwin은 서버·화면·DB·시뮬레이터·엣지를 합쳐 늘 1GB 넘게 쓰므로, 메모리를 4GB로 잡으면 20%(0.8GB) 위에 있습니다. 12GB를 다 잡으면 오히려 20% 아래로 떨어질 수 있습니다. 띄운 뒤 7장에서 실제 사용률을 확인합니다.
+가상 공장은 쉬지 않고 돌지만 CPU는 거의 놀고 방문자도 드물어, CPU·네트워크는 20%를 넘기 어렵습니다. 그래서 **메모리**로 20%를 넘깁니다. LumiTwin은 서버·화면·DB·시뮬레이터·엣지를 합쳐 늘 1GB 넘게 쓰므로, 메모리를 4GB로 잡으면 20%(0.8GB) 위에 있습니다. 12GB를 다 잡으면 오히려 20% 아래로 떨어질 수 있습니다. 띄운 뒤 8장에서 실제 사용률을 확인합니다.
 
 음성 받아쓰기 서버(`WHISPER=1`, 램 약 1GB 더)까지 켤 거면 메모리를 6GB로 잡습니다.
 
@@ -167,7 +167,59 @@ cd ~/lumitwin && SIM_LINK=opcua bash deploy/aws/setup-ubuntu.sh 이름.duckdns.o
 | `SIM_SPEED=20` | 시뮬레이터 배속 (`1`·`5`·`20`·`60`, 기본 5) |
 | `WHISPER=1` | 음성 받아쓰기 서버도 켠다 (메모리 6GB 권장, 처음에 모델 약 460MB를 받는다) |
 
-## 7. 띄운 뒤 확인
+## 7. 로그인·계정 설정
+
+실행 MES는 설비 조작·시뮬레이터 제어·작업지시·불량 처리 판정 같은 쓰기 요청에 로그인과 역할 권한을 요구합니다. 시연 계정 5개(`op1` 현장 작업자, `lead1` 라인 조장, `qa1` 품질 담당, `mt1` 보전 담당, `admin` 시스템 관리자)는 서버가 뜰 때 DB에 만들어집니다. 역할별로 할 수 있는 일은 [docs/MES.md](../../docs/MES.md)에 있습니다.
+
+설치 스크립트는 `deploy/aws/server.env.example`을 복사하고(`AUTH=on`, `AUTH_COOKIE_SECURE=auto`), `AUTH_SECRET`에 무작위 키를 만들어 넣습니다. 처음에는 아래 값으로 뜹니다.
+
+| 환경 변수 (`server/.env`) | 처음 값 | 공개 서버에서 |
+|---|---|---|
+| `AUTH` | `on` | 그대로 둔다. `off`면 로그인 없이 모든 요청을 시스템 사용자(관리자 권한)로 받는다 |
+| `DEMO_PASSWORD` | 줄이 주석 = 코드에 공개된 기본 비밀번호(`demo1234`). 로그인 화면의 계정 버튼만 눌러도 들어간다 | **직접 정한다.** 정하면 계정 버튼은 아이디만 채우고 비밀번호를 넣어야 한다 |
+| `AUTH_SECRET` | 설치 스크립트가 만든 64자 무작위 값 (`openssl rand -hex 32`) | 그대로 둔다. 줄을 지우면 처음 뜰 때 키를 만들어 `server/.auth-secret`에 저장한다 |
+| `AUTH_COOKIE_SECURE` | `auto` = HTTPS로 들어온 요청(`X-Forwarded-Proto: https`)에만 쿠키 `Secure` | Caddy가 HTTPS만 받으므로 `on`으로 둔다 |
+
+**설정하기** (VM 안에서)
+
+```bash
+nano ~/lumitwin/server/.env
+```
+
+맨 아래에 두 줄을 더합니다. 비밀번호는 직접 정하고, 이 문서나 저장소에 적지 않습니다.
+
+```
+DEMO_PASSWORD=직접_정한_비밀번호
+AUTH_COOKIE_SECURE=on
+```
+
+서버만 다시 띄웁니다. 서버는 뜰 때 `server/.env`를 읽고, 시연 계정 비밀번호를 새 값으로 바꿉니다. 시뮬레이터는 그대로 돕니다.
+
+```bash
+pm2 restart lumitwin-server
+```
+
+```bash
+curl -s http://127.0.0.1:8790/api/v1/auth/me
+```
+
+`"enabled":true`와 `"demo":false`(계정 버튼만으로는 못 들어감)가 보이면 됩니다.
+
+- `server/.env`와 `server/.auth-secret`은 git에 올라가지 않습니다. `bash deploy/aws/update.sh`(`git pull`)로 새 버전을 받아도 그대로 남아 로그인이 유지됩니다.
+- 로그인은 8시간 유지됩니다. 로그인 시도는 IP별 1분 10번까지입니다.
+
+**공개 주소에서 시연자가 조작하는 순서**
+
+이 서버는 `READ_ONLY=all`이라 모든 방문자가 보기 전용입니다. 보기 전용은 로그인보다 먼저 막습니다. 그래서 방문자는 로그인 요청도 보낼 수 없고, 기본 비밀번호를 알아도 들어올 수 없습니다.
+
+1. 화면 위쪽의 `보기 전용`을 누르고 제어 키를 넣는다. `조작 가능`으로 바뀐다. 키는 VM에서 본인만 본다: `grep ^CONTROL_KEY= ~/lumitwin/server/.env`
+2. 위쪽 오른쪽의 `로그인`을 누른다. 로그인 화면의 계정 버튼으로 아이디를 채우고, 정한 비밀번호를 넣어 `로그인`.
+3. 역할을 바꿀 때는 사용자 메뉴 → `다른 계정으로 로그인`. 끝나면 사용자 메뉴 → `로그아웃`.
+4. 누가 무엇을 했는지는 `admin`으로 로그인해 사용자 메뉴 → `감사 기록`(`/audit`)에서 본다.
+
+> Caddy의 `basic_auth`([deploy/aws/README.md 6장](../aws/README.md#6-운영))는 사이트 전체를 아이디·비밀번호로 닫는 것이고, 여기의 로그인은 앱 안에서 역할을 나누는 것입니다. 둘은 따로 동작합니다.
+
+## 8. 띄운 뒤 확인
 
 VM 안에서:
 
@@ -201,10 +253,13 @@ PC 브라우저·휴대폰에서:
 - [ ] 연결 점을 누르면 데이터 경로가 OPC UA로 나오고, 엣지 게이트웨이가 설비·태그를 찾았다.
 - [ ] 생산 현황·6대 로스·설비 보전·SPC 화면에 숫자가 찬다 (몇 분 돌아야 쌓인다).
 - [ ] 휴대폰으로 `https://이름.duckdns.org/operator`에 들어가 설비를 고를 수 있다.
-- [ ] 화면의 `보기 전용`을 눌러 제어 키를 넣으면 배속·시나리오를 바꿀 수 있다. 키는 VM에서 본인만 봅니다: `grep ^CONTROL_KEY= ~/lumitwin/server/.env`
+- [ ] 제어 키 없이 `/login`에 가면 "공개 링크는 보기 전용이라 로그인할 수 없습니다" 안내가 보이고 계정 버튼이 막혀 있다.
+- [ ] 화면의 `보기 전용`을 눌러 제어 키를 넣은 뒤 `lead1`(라인 조장)로 로그인하면 배속·시나리오를 바꿀 수 있다. 키는 VM에서 본인만 봅니다: `grep ^CONTROL_KEY= ~/lumitwin/server/.env`
+- [ ] 정한 `DEMO_PASSWORD`로만 로그인되고, 계정 버튼만 눌러서는 들어가지 않는다(7장).
+- [ ] `admin`으로 로그인해 사용자 메뉴 → `감사 기록`에 방금 한 로그인·배속 변경이 남아 있다.
 - [ ] 밖에서 내부 포트가 막혀 있다. PC PowerShell에서 `Test-NetConnection <공인 IP> -Port 8790`이 `TcpTestSucceeded : False`
 
-## 8. 운영
+## 9. 운영
 
 | 하는 일 | 명령 (VM 안, `~/lumitwin`에서) |
 |---|---|
@@ -213,12 +268,28 @@ PC 브라우저·휴대폰에서:
 | 로그 | `pm2 logs lumitwin-server --lines 100` · `pm2 logs lumitwin-edge --lines 50` |
 | 경로·배속 바꾸기 | `SIM_LINK=mqtt SIM_SPEED=20 bash deploy/aws/setup-ubuntu.sh 이름.duckdns.org` |
 | 로그 회전 | `pm2 install pm2-logrotate` |
+| 시연 계정 비밀번호 바꾸기 | `server/.env`의 `DEMO_PASSWORD`를 고치고 `pm2 restart lumitwin-server` |
+| 모든 로그인 끊기 | `AUTH_SECRET`을 쓰면 값을 바꾸고, 안 쓰면 `rm server/.auth-secret`. 그다음 `pm2 restart lumitwin-server` (서명 키가 바뀌어 발급한 쿠키가 모두 무효가 된다) |
+| 제어 키 바꾸기 | `server/.env`의 `CONTROL_KEY`를 고치고 `pm2 restart lumitwin-server` |
 
-- AI 비서를 Claude로 돌리기, 보기 전용, 아이디·비밀번호 걸기, DB 백업은 [deploy/aws/README.md 6장](../aws/README.md#6-운영)과 같습니다.
+- AI 비서를 Claude로 돌리기, 보기 전용, Caddy 아이디·비밀번호 걸기, DB 백업은 [deploy/aws/README.md 6장](../aws/README.md#6-운영)과 같습니다.
+- 로그아웃한 쿠키 목록과 로그인 시도 횟수는 서버 메모리에만 있어, 서버를 다시 띄우면 잊습니다. 로그아웃한 쿠키를 누가 따로 가지고 있었다면 재시작 뒤 만료(최대 8시간)까지 다시 쓸 수 있습니다. 걱정되면 위의 "모든 로그인 끊기"를 합니다.
+- 감사 기록(`action_log` 표)은 실행을 바꿔도 지우지 않고 쌓입니다. DB 백업에 함께 들어갑니다.
 - 공인 IP가 바뀌면(인스턴스를 지우고 다시 만들었을 때 등) DuckDNS의 `current ip`만 새 IP로 고칩니다.
 - **회수 대비**: 회수가 어떤 방식(중지·삭제)으로 이루어지는지는 공식 문서에 자세히 나와 있지 않습니다. 인스턴스가 멈춰 있으면 콘솔에서 `Start`를 누릅니다. pm2가 재부팅 때 모두 다시 띄웁니다. 인스턴스가 없어졌으면 2장부터 다시 하면 되고, 데이터는 가상 공장 기록이라 새로 쌓입니다.
 
-## 9. 문제가 생기면
+### 상시 주소로 시연하기 (직접 할 일)
+
+주소를 만들고 영상을 찍는 일은 계정·판단이 필요해 직접 합니다. 순서만 적습니다.
+
+1. 2~8장을 끝내고 `https://이름.duckdns.org`가 열리는지 확인한다.
+2. 7장대로 `DEMO_PASSWORD`를 정하고, 제어 키와 함께 비밀번호 관리자 같은 안전한 곳에 둔다. 면접관에게는 주소만 준다(보기 전용으로 둘러볼 수 있다).
+3. README 맨 위 소개나 "공개 링크·배포" 장에 이 주소를 적는다.
+4. 시연 전날 `pm2 restart lumitwin-sim lumitwin-edge`로 새 실행을 시작해 숫자를 쌓아 둔다. 배속은 `SIM_SPEED`(기본 5)를 따른다.
+5. 시연 영상은 [docs/DEMO.md](../../docs/DEMO.md)의 "시연 영상 녹화" 순서대로 찍는다. 이 주소로 찍을 때는 먼저 `보기 전용` → 제어 키 → 로그인을 한다.
+6. 일주일에 한 번쯤 주소가 열리는지, `free -m` 메모리 사용률이 20%를 넘는지 본다(0장 회수 규칙).
+
+## 10. 문제가 생기면
 
 | 증상 | 볼 곳 |
 |---|---|
@@ -229,5 +300,10 @@ PC 브라우저·휴대폰에서:
 | 빌드가 `Killed`로 끝남 | 램 부족. `swapon --show`로 스왑을 보고, 인스턴스 메모리를 6GB로 늘린다 |
 | 연결 점이 빨강·데이터 경로가 비었음 | `pm2 logs lumitwin-sim`, `pm2 logs lumitwin-edge`. 엣지는 가상 PLC가 늦게 떠도 1→10초 간격으로 다시 붙는다 |
 | 502 Bad Gateway | `pm2 status`에서 `lumitwin-server`·`lumitwin-client`가 `online`인지 |
+| 로그인 화면이 "공개 링크는 보기 전용이라 로그인할 수 없습니다" | 정상이다. `보기 전용`을 눌러 제어 키를 먼저 넣는다 |
+| 계정 버튼을 눌러도 아이디만 채워짐 | `DEMO_PASSWORD`를 정한 서버다. 비밀번호를 넣고 `로그인` |
+| 로그인했는데 버튼이 흐림 ("… 권한이 없습니다") | 역할이 다르다. 사용자 메뉴 → `다른 계정으로 로그인`. 역할별 권한은 [docs/MES.md](../../docs/MES.md) |
+| 재시작할 때마다 로그인이 풀림 | `server/.auth-secret`을 쓰지 못하는 것. `pm2 logs lumitwin-server`에서 "서명 키를 저장하지 못했습니다"를 찾고, `server/` 폴더 쓰기 권한을 확인하거나 `AUTH_SECRET`을 `server/.env`에 정한다 |
+| HTTP(인증서 받기 전)로 들어오면 로그인이 안 됨 | `AUTH_COOKIE_SECURE=on`이면 쿠키가 HTTPS에서만 실린다. 인증서를 받은 뒤 `https://`로 들어온다 |
 
 **시험 범위**: arm64(aarch64)에서 쓰는 네이티브 패키지(Next의 SWC, Tailwind oxide, lightningcss, sharp 등)의 linux-arm64 판이 `package-lock.json`에 있는 것과 스크립트 문법은 확인했습니다. Oracle VM에서 처음부터 끝까지 돌려 본 결과는 아직 없습니다. 처음 설치 때 나온 문제는 이 문서에 더합니다.

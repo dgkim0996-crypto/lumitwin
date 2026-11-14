@@ -3,23 +3,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import type { TraceNode } from '@lumitwin/shared';
+import { UnitStatusBadge } from '@/components/execution/bits';
 import { api } from '@/lib/api';
 import { cx, kst, num } from '@/lib/format';
 import { useLive } from '@/lib/live';
 import { defectName, ITEM_NAMES, stationName, valueMeta } from '@/lib/names';
 
-export const UNIT_STATUS: Record<string, string> = { WIP: '공정 중', NG: '불량', DONE: '완성', CONSUMED: '조립됨' };
-
-/** 제품 상태 배지 (색 + 글자) */
-export function StatusBadge({ status, defect }: { status: string | null; defect?: string | null }) {
-  if (!status) return <span className="rounded bg-white/10 px-1.5 text-[11px] text-dim">기록 없음</span>;
-  return (
-    <span className={cx('whitespace-nowrap rounded px-1.5 text-[11px]', status === 'NG' ? 'bg-down/20 text-down' : status === 'DONE' ? 'bg-run/20 text-run' : 'bg-white/10 text-sub')}>
-      {UNIT_STATUS[status] ?? status}
-      {defect ? ` · ${defectName(defect)}` : ''}
-    </span>
-  );
-}
+/** 제품 상태 배지 (색 + 글자). 폐기·격리·수리대까지 실행 MES 화면과 같은 배지를 쓴다 */
+export const StatusBadge = UnitStatusBadge;
 
 /** 시리얼 계보 트리. onPick이 없으면 시리얼을 누를 때 이력 창을 연다. full이면 공정 값을 모두 이름과 함께 보인다 */
 export function TraceTree({ n, depth = 0, onPick, full = false }: { n: TraceNode; depth?: number; onPick?: (serial: string) => void; full?: boolean }) {

@@ -12,7 +12,23 @@ import { useUi } from '@/lib/ui';
 import { useVoiceInput } from '@/lib/voice';
 import { Markdown } from './Markdown';
 
-const PAGE_LABEL: Record<string, string> = { '/': '3D 공장', '/production': '생산 현황', '/spc': 'SPC', '/quality': '불량 분석', '/trace': '추적', '/operator': '작업자 태블릿' };
+const PAGE_LABEL: Record<string, string> = {
+  '/': '3D 공장',
+  '/production': '생산 현황',
+  '/spc': 'SPC',
+  '/quality': '불량 분석',
+  '/trace': '추적·Hold',
+  '/operator': '작업자 태블릿',
+  '/orders': '작업지시·생산 계획',
+  '/ncr': '불량 처리(NCR)',
+  '/changes': '4M 변경점·초중종물',
+  '/control-plan': '관리계획서',
+  '/reports': '교대 일보',
+  '/energy': '에너지',
+  '/maintenance': '설비 보전·예지 보전',
+  '/losses': '로스 분석',
+  '/audit': '감사 기록',
+};
 
 /** 작업자 태블릿(/operator/설비코드)은 주소의 설비가 "이 설비"다 */
 function operatorStation(path: string): string | null {

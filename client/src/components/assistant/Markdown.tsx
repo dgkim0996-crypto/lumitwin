@@ -12,11 +12,33 @@ import { useUi, type FocusTarget } from '@/lib/ui';
  * 글 속의 설비 코드·LOT·시리얼·표준서 인용·화면 경로는 눌러서 바로 가는 링크로 바꾼다.
  */
 
-// [WS-HL-03 §7] · WS-COM-01 · /trace?lot=… · GEARSET-261112-534 · OM26111200186 · OSM-FT-01
+// WO-HL-261114-001 · HOLD-261114-001 · NCR-261114-0003 · [WS-HL-03 §7] · WS-COM-01 · /trace?lot=… · GEARSET-261112-534 · OM26111200186 · OSM-FT-01
+// 실행 MES 문서 번호를 맨 앞에 둔다 (HOLD-…·WO-HL-…의 일부가 LOT 번호로 잡히지 않게)
 const TOKEN =
-  /(\[)?(WS-(?:HL|EM|OSM|COM)-\d{2})(?:\s*§\s*(\d+))?(\])?|(\/(?:production|spc|quality|trace)(?:\?[A-Za-z0-9=&%_-]+)?)|\b([A-Z][A-Z0-9_]+-\d{6}-\d{3})\b|\b([A-Z]{2}\d{11})\b|\b((?:HL|EM|OSM)-[A-Z0-9]+(?:-[A-Z0-9]+)?)\b/g;
+  /\b(WO-(?:HL|EM|OSM)-\d{6}-\d{3}|HOLD-\d{6}-\d{3}|NCR-\d{6}-\d{4})\b|(\[)?(WS-(?:HL|EM|OSM|COM)-\d{2})(?:\s*§\s*(\d+))?(\])?|(\/(?:production|spc|quality|trace|orders|ncr|changes|control-plan|reports|energy|maintenance|losses)(?:\?[A-Za-z0-9=&%_-]+)?)|\b([A-Z][A-Z0-9_]+-\d{6}-\d{3})\b|\b([A-Z]{2}\d{11})\b|\b((?:HL|EM|OSM)-[A-Z0-9]+(?:-[A-Z0-9]+)?)\b/g;
 
-const PAGE_NAMES: Record<string, string> = { '/production': '생산 현황', '/spc': 'SPC', '/quality': '불량 분석', '/trace': '추적', '/operator': '작업자 태블릿' };
+const PAGE_NAMES: Record<string, string> = {
+  '/production': '생산 현황',
+  '/spc': 'SPC',
+  '/quality': '불량 분석',
+  '/trace': '추적·Hold',
+  '/operator': '작업자 태블릿',
+  '/orders': '작업지시',
+  '/ncr': '불량 처리',
+  '/changes': '변경점',
+  '/control-plan': '관리계획서',
+  '/reports': '교대 일보',
+  '/energy': '에너지',
+  '/maintenance': '설비 보전',
+  '/losses': '로스 분석',
+};
+
+/** 실행 MES 문서 번호 → 그 문서를 다루는 화면 */
+const DOC_PAGE: [RegExp, string, string][] = [
+  [/^WO-/, '/orders', '작업지시 화면에서 보기'],
+  [/^HOLD-/, '/trace', '추적·Hold 화면에서 보기'],
+  [/^NCR-/, '/ncr', '불량 처리 화면에서 보기'],
+];
 
 function useNavigate() {
   const router = useRouter();
@@ -60,11 +82,18 @@ function Linkified({ text, nav }: { text: string; nav: ReturnType<typeof useNavi
   const out: ReactNode[] = [];
   let last = 0;
   for (const m of text.matchAll(TOKEN)) {
-    const [all, open, doc, sec, close, page, lot, serial, station] = m;
+    const [all, mesDoc, open, doc, sec, close, page, lot, serial, station] = m;
     const at = m.index ?? 0;
     if (at > last) out.push(text.slice(last, at));
     last = at + all.length;
-    if (doc) {
+    const docPage = mesDoc ? DOC_PAGE.find(([re]) => re.test(mesDoc)) : undefined;
+    if (mesDoc && docPage) {
+      out.push(
+        <button key={at} className={`${linkCls} num`} title={docPage[2]} onClick={() => nav.page(docPage[1])}>
+          {mesDoc}
+        </button>,
+      );
+    } else if (doc) {
       // 짝이 맞는 대괄호만 링크에 포함한다
       const label = `${doc}${sec ? ` §${sec}` : ''}`;
       if (open && !close) out.push('[');

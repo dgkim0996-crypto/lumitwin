@@ -33,8 +33,13 @@ model ProductionUnit {
   lastStep     String   @map("last_step")
   lastStation  String   @map("last_station")
   /// WIP(공정 중) · NG(불량 판정) · DONE(최종 공정 통과) · CONSUMED(상위 제품에 조립됨)
+  /// P9: SCRAP(폐기) · HOLD(격리) · REPAIR(수리대). 실행 모듈이 ProductionWriter.setStatus로 바꾼다
   status       String
   defect       String?
+  /// 기종 코드 (제품 경로 공정부터)
+  variant      String?
+  /// 작업지시 ID (WorkOrder.id)
+  workOrder    Int?     @map("work_order")
   /// 이 부품이 조립된 상위 제품 시리얼
   parentSerial String?  @map("parent_serial")
   firstAt      DateTime @map("first_at") @db.Timestamptz(3)
@@ -69,11 +74,20 @@ model ProcessRecord {
   comps     String[] @default([])
   /// 시뮬레이터만 아는 진실: 검사를 빠져나간 잠재 불량 (최종 공정에서만)
   escaped   String[] @default([])
+  /// 기종·작업지시 (P9)
+  variant   String?
+  workOrder Int?     @map("work_order")
+  /// 초물·수리 뒤 재검사·인터록 무응답 통과 (P9)
+  fa        Boolean  @default(false)
+  reinspect Boolean  @default(false)
+  ilkSkip   Boolean  @default(false) @map("ilk_skip")
   startedAt DateTime @map("started_at") @db.Timestamptz(3)
   endedAt   DateTime @map("ended_at") @db.Timestamptz(3)
 
   @@index([runId, serial])
   @@index([runId, station, endedAt])
+  /// 교대 일보·에너지 구간 집계 (P9)
+  @@index([runId, endedAt])
   @@map("process_record")
 }
 
@@ -143,4 +157,227 @@ model Alarm {
   @@index([runId, at])
   @@index([liveId])
   @@map("alarm")
+}
+
+// ─────────────────────────── 실행 MES (P9) ───────────────────────────
+
+/// 작업지시 (생산 계획의 한 줄). 라인이 투입 공정에서 하나씩 받아 기종·수량만큼 투입한다
+model WorkOrder {
+  id        Int       @id @default(autoincrement())
+  runId     Int       @map("run_id")
+  /// WO-HL-261113-001
+  code      String
+  line      String
+  variant   String
+  qty       Int
+  /// 같은 라인 안의 투입 순서 (작을수록 먼저)
+  seq       Int
+  /// PLANNED · RUNNING · DONE · CANCELLED
+  status    String
+  /// 투입 수 (시뮬레이터가 알려 준 값)
+  released  Int       @default(0)
+  /// 최종 공정 양품 수 · 폐기 수
+  doneQty   Int       @default(0) @map("done_qty")
+  scrapQty  Int       @default(0) @map("scrap_qty")
+  /// AUTO(자동 계획) · USER(사람이 만듦)
+  source    String
+  createdBy String?   @map("created_by")
+  note      String?
+  /// 가상 시각
+  createdAt DateTime  @map("created_at") @db.Timestamptz(3)
+  startedAt DateTime? @map("started_at") @db.Timestamptz(3)
+  endedAt   DateTime? @map("ended_at") @db.Timestamptz(3)
+
+  @@index([runId, line, status, seq])
+  @@map("work_order")
+}
+
+/// 인터록 판정 기록. 통과(OK)는 남기지 않고 거부(NG)·대기(WAIT)만 남긴다 (통과 수는 실시간 집계)
+model InterlockLog {
+  id      BigInt   @id @default(autoincrement())
+  runId   Int      @map("run_id")
+  line    String
+  station String
+  step    String
+  serial  String
+  /// NG · WAIT
+  verdict String
+  /// ROUTE · NG · HOLD · WO · FA · REPAIR
+  code    String
+  reason  String
+  comps   String[] @default([])
+  at      DateTime @db.Timestamptz(3)
+
+  @@index([runId, at])
+  @@index([runId, station, at])
+  @@index([runId, serial])
+  @@map("interlock_log")
+}
+
+/// 부적합 보고 (NCR): 제품 경로에서 불량 판정이 난 개체 한 건의 처리
+model Ncr {
+  id          Int       @id @default(autoincrement())
+  runId       Int       @map("run_id")
+  /// NCR-261113-0001
+  code        String
+  serial      String
+  item        String
+  line        String
+  station     String
+  step        String
+  defect      String
+  variant     String?
+  workOrder   Int?      @map("work_order")
+  /// OPEN · WAIT_MRB · REPAIRING · REINSPECT · CLOSED
+  status      String
+  /// REPAIR · REWORK · SCRAP · UAI (정해지기 전 null)
+  disposition String?
+  /// 판정 근거 (mes.ts AutoRule)
+  rule        String?
+  decidedBy   String?   @map("decided_by")
+  decidedAt   DateTime? @map("decided_at") @db.Timestamptz(3)
+  repairOk    Boolean?  @map("repair_ok")
+  repairMin   Float?    @map("repair_min")
+  /// 재검사 결과 OK · NG
+  reinspect   String?
+  /// 몇 번째 불량인가 (재검사에서 또 불합격이면 2)
+  attempt     Int       @default(1)
+  openedAt    DateTime  @map("opened_at") @db.Timestamptz(3)
+  closedAt    DateTime? @map("closed_at") @db.Timestamptz(3)
+  note        String?
+
+  @@index([runId, status])
+  @@index([runId, serial])
+  @@index([runId, openedAt])
+  @@map("ncr")
+}
+
+/// Hold (격리): 자재 LOT 또는 시리얼을 묶어 다음 공정 투입을 막는다
+model Hold {
+  id          Int       @id @default(autoincrement())
+  runId       Int       @map("run_id")
+  /// HOLD-261113-001
+  code        String
+  /// LOT · SERIAL
+  kind        String
+  material    String?
+  lot         String?
+  serials     String[]  @default([])
+  reason      String
+  /// ACTIVE · RELEASED
+  status      String
+  createdBy   String?   @map("created_by")
+  createdAt   DateTime  @map("created_at") @db.Timestamptz(3)
+  releasedBy  String?   @map("released_by")
+  releasedAt  DateTime? @map("released_at") @db.Timestamptz(3)
+  releaseNote String?   @map("release_note")
+  /// RELEASE(해제해 다시 흘림) · SCRAP(격리품 폐기)
+  result      String?
+
+  @@index([runId, status])
+  @@map("hold")
+}
+
+/// 4M 변경점 (사람·설비·자재·방법). 초물 검사가 필요하면 faStatus로 판정을 따라간다
+model ChangePoint {
+  id         Int       @id @default(autoincrement())
+  runId      Int       @map("run_id")
+  /// 가상 시각
+  at         DateTime  @db.Timestamptz(3)
+  line       String
+  station    String
+  /// MAN · MACHINE · MATERIAL · METHOD
+  category   String
+  /// shift · repair · lot · changeover · condition · pm · user
+  kind       String
+  detail     String
+  /// SIM(시뮬레이터 감지) · USER(작업자 신고)
+  source     String
+  /// 시뮬레이터 변경점 번호 ('S12') 또는 MES 번호 ('U3')
+  simId      String?   @map("sim_id")
+  createdBy  String?   @map("created_by")
+  /// PENDING · OK · NG · NONE
+  faStatus   String    @map("fa_status")
+  faSerial   String?   @map("fa_serial")
+  faAt       DateTime? @map("fa_at") @db.Timestamptz(3)
+  approvedBy String?   @map("approved_by")
+  approvedAt DateTime? @map("approved_at") @db.Timestamptz(3)
+
+  @@index([runId, at])
+  @@index([runId, station, faStatus])
+  @@index([runId, simId])
+  @@map("change_point")
+}
+
+/// 초·중·종물 검사 기록
+model Inspection {
+  id       Int      @id @default(autoincrement())
+  runId    Int      @map("run_id")
+  at       DateTime @db.Timestamptz(3)
+  line     String
+  station  String
+  /// FIRST · MID · LAST
+  type     String
+  serial   String
+  /// OK · NG
+  result   String
+  values   Json
+  variant  String?
+  /// 초물이면 변경점 (ChangePoint.id)
+  changeId Int?     @map("change_id")
+  /// 검사·확인한 사람 (자동 측정이면 null)
+  by       String?
+
+  @@index([runId, station, at])
+  @@index([runId, type, at])
+  @@map("inspection")
+}
+
+/// 상태 감시 표본 (진동·전류·온도, 가상 1분마다)
+model HealthSample {
+  id      BigInt   @id @default(autoincrement())
+  runId   Int      @map("run_id")
+  station String
+  at      DateTime @db.Timestamptz(3)
+  vib     Float
+  cur     Float
+  temp    Float
+
+  @@index([runId, station, at])
+  @@map("health_sample")
+}
+
+/// 사용자 (시연 계정). 비밀번호는 scrypt 해시
+model User {
+  id        Int      @id @default(autoincrement())
+  login     String   @unique
+  name      String
+  /// operator · leader · quality · maintenance · admin
+  role      String
+  passHash  String   @map("pass_hash")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@map("app_user")
+}
+
+/// 감사 기록: 누가 언제 무엇을 바꿨나 (설비 조작·작업지시·불량 판정·Hold·변경점·로그인)
+model ActionLog {
+  id     BigInt    @id @default(autoincrement())
+  runId  Int?      @map("run_id")
+  /// 실제 시각
+  at     DateTime  @default(now()) @db.Timestamptz(3)
+  /// 가상 시각 (그때 시뮬레이터 시계)
+  vAt    DateTime? @map("v_at") @db.Timestamptz(3)
+  user   String
+  role   String
+  /// 예: wo.create · ncr.dispose · hold.release · sim.speed · login
+  action String
+  target String?
+  detail Json?
+  ip     String?
+
+  @@index([at])
+  @@index([user, at])
+  @@map("action_log")
 }

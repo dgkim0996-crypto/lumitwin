@@ -29,7 +29,7 @@ const report = buildMaintenance(
 
 /** 보전 도구만 진짜로 돌리고, 나머지 도구는 불린 것만 적어 둔다 */
 function setup() {
-  const tools = new AssistantTools({} as never, {} as never, {} as never, {} as never, { report: async () => report } as never);
+  const tools = new AssistantTools({} as never, {} as never, {} as never, {} as never, { report: async () => report } as never, {} as never);
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const spy = {
     run: async (name: string, input: Record<string, unknown>) => {

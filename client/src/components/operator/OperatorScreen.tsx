@@ -18,14 +18,17 @@ import {
 import { pageContext } from '@/components/assistant/AssistantPanel';
 import { SpecBar } from '@/components/hud/StationPanel';
 import { AccessBadge } from '@/components/hud/AccessBadge';
-import { READ_ONLY_TITLE, useAccess } from '@/lib/access';
+import { useAccess } from '@/lib/access';
 import { api, simCommand } from '@/lib/api';
 import { useAssistant } from '@/lib/assistant';
+import { useGate } from '@/lib/auth';
 import { cx, duration, kst, num, pct, STATE_COLOR, STATE_LABEL } from '@/lib/format';
 import { useLive } from '@/lib/live';
 import { defectName } from '@/lib/names';
 import { remembered, useStationStandard } from '@/lib/operator';
 import { useUi } from '@/lib/ui';
+import { BottomSheet } from './BottomSheet';
+import { OperatorQuality } from './OperatorQuality';
 
 const STATE_HINT: Record<StationState, string> = {
   RUN: '가공 중입니다',
@@ -194,30 +197,6 @@ const SHEET_TITLE: Record<OperatorStopKind, { title: string; desc: string; op: S
   fail: { title: '고장 등록', desc: '설비 이상으로 세웁니다. 알람이 올라가고 수리 완료를 누를 때까지 멈춥니다.', op: 'fail', tone: 'border-down/50 bg-down/15 text-down' },
 };
 
-function BottomSheet({ title, desc, onClose, children }: { title: string; desc?: ReactNode; onClose: () => void; children: ReactNode }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-  return (
-    <div className="fixed inset-0 z-[55] flex items-end justify-center bg-black/60 p-3 sm:items-center" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-label={title} className="panel w-full max-w-[640px] p-4" style={{ background: 'var(--color-panel-solid)' }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-xl font-semibold">{title}</div>
-            {desc && <div className="mt-1 text-sm text-sub">{desc}</div>}
-          </div>
-          <button onClick={onClose} className="h-11 shrink-0 rounded-lg px-3 text-base text-sub hover:bg-white/10">
-            취소
-          </button>
-        </div>
-        <div className="mt-4">{children}</div>
-      </div>
-    </div>
-  );
-}
-
 function Confirm({ label, onConfirm, pending, items, check, tone }: { label: string; onConfirm: () => void; pending: boolean; items: string[]; check: string; tone: string }) {
   const [ok, setOk] = useState(false);
   return (
@@ -283,7 +262,10 @@ function Actions({ code, safety, troubleN, docId }: { code: string; safety: stri
   const { readOnly } = useAccess();
   // 조작 가능: 시뮬레이터가 붙어 있고, 공개 링크(보기 전용)가 아닐 때
   const sim = connected && !readOnly;
-  const lock = readOnly ? READ_ONLY_TITLE : undefined;
+  // 역할 권한 (P9): 정지·셋업·재가동·고장 등록 = station.op, 수리 완료 = station.repair (보전).
+  // useGate가 보기 전용 → 로그인 → 권한 순으로 판단해 막힌 이유(title)를 준다 — 서버 403과 같은 기준
+  const opGate = useGate('station.op');
+  const repairGate = useGate('station.repair');
   const openStandard = useAssistant((s) => s.openStandard);
   const [sheet, setSheet] = useState<Sheet>(null);
   const op = useMutation({
@@ -306,7 +288,7 @@ function Actions({ code, safety, troubleN, docId }: { code: string; safety: stri
       {running && (
         <div className="grid grid-cols-3 gap-2">
           {(['stop', 'setup', 'fail'] as const).map((k) => (
-            <button key={k} disabled={!sim} title={lock} onClick={() => setSheet({ kind: k })} className={cx(big, SHEET_TITLE[k].tone)}>
+            <button key={k} disabled={!sim || !opGate.ok} title={opGate.title} onClick={() => setSheet({ kind: k })} className={cx(big, SHEET_TITLE[k].tone)}>
               {SHEET_TITLE[k].title}
               <span className="mt-0.5 text-xs font-normal opacity-80">사유 선택</span>
             </button>
@@ -314,15 +296,15 @@ function Actions({ code, safety, troubleN, docId }: { code: string; safety: stri
         </div>
       )}
       {(state === 'STOP' || state === 'SETUP') && (
-        <button disabled={!sim} title={lock} onClick={() => setSheet({ kind: 'start' })} className={cx(big, 'w-full border-run/50 bg-run/15 text-run')}>
+        <button disabled={!sim || !opGate.ok} title={opGate.title} onClick={() => setSheet({ kind: 'start' })} className={cx(big, 'w-full border-run/50 bg-run/15 text-run')}>
           재가동
         </button>
       )}
       {state === 'DOWN' && (
         <div className="grid grid-cols-2 gap-2">
-          <button disabled={!sim} title={lock} onClick={() => setSheet({ kind: 'repair' })} className={cx(big, 'border-run/50 bg-run/15 text-run')}>
+          <button disabled={!sim || !repairGate.ok} title={repairGate.title} onClick={() => setSheet({ kind: 'repair' })} className={cx(big, 'border-run/50 bg-run/15 text-run')}>
             수리 완료
-            <span className="mt-0.5 text-xs font-normal opacity-80">안전 확인 후</span>
+            <span className="mt-0.5 text-xs font-normal opacity-80">{repairGate.ok || repairGate.readOnly ? '안전 확인 후' : '보전 담당 권한'}</span>
           </button>
           <button disabled={!docId} onClick={() => docId && openStandard({ id: docId, n: troubleN })} className={cx(big, 'border-line bg-white/5')}>
             조치 방법
@@ -414,7 +396,7 @@ function Ask({ code }: { code: string }) {
 function StationAlarms({ code }: { code: string }) {
   const alarms = useLive((s) => s.alarms);
   const ackLocal = useLive((s) => s.ackLocal);
-  const { readOnly } = useAccess();
+  const ackGate = useGate('alarm.ack');
   const mine = alarms.filter((a) => a.station === code);
   const open = mine.filter((a) => !a.acked);
   const shown = [...open, ...mine.filter((a) => a.acked)].slice(0, 5);
@@ -435,8 +417,13 @@ function StationAlarms({ code }: { code: string }) {
               <div className="text-base leading-snug">{a.title}</div>
               {a.detail && <div className="text-sm leading-snug text-sub">{a.detail}</div>}
             </div>
-            {!a.acked && !readOnly && (
-              <button onClick={() => ack(a.id)} className="h-12 shrink-0 rounded-lg border border-line bg-white/10 px-4 text-base hover:bg-white/20">
+            {!a.acked && !ackGate.readOnly && (
+              <button
+                disabled={!ackGate.ok}
+                title={ackGate.title}
+                onClick={() => ack(a.id)}
+                className="h-12 shrink-0 rounded-lg border border-line bg-white/10 px-4 text-base hover:bg-white/20 disabled:opacity-40"
+              >
                 확인
               </button>
             )}
@@ -455,7 +442,7 @@ function Checklist({ code, items, docId, loading }: { code: string; items: strin
   const [answers, setAnswers] = useState<Record<number, boolean>>({});
   const [by, setBy] = useState('');
   const [saved, setSaved] = useState<CheckRecordView | null>(null);
-  const { readOnly } = useAccess();
+  const recordGate = useGate('check.record');
   useEffect(() => setBy(remembered.by()), []);
   useEffect(() => {
     setAnswers({});
@@ -533,12 +520,18 @@ function Checklist({ code, items, docId, loading }: { code: string; items: strin
               className="h-14 w-40 min-w-0 flex-1 rounded-xl border border-line bg-white/[0.04] px-3 text-base outline-none placeholder:text-dim focus:border-info/60 sm:flex-none"
             />
             <button
-              disabled={done < items.length || save.isPending || readOnly}
-              title={readOnly ? READ_ONLY_TITLE : undefined}
+              disabled={done < items.length || save.isPending || !recordGate.ok}
+              title={recordGate.title}
               onClick={() => save.mutate({ station: code, doc: docId ?? null, by: by.trim() || null, items: items.map((text, i) => ({ text, ok: answers[i] === true })) })}
               className="h-14 flex-1 rounded-xl border border-info/50 bg-info/20 px-4 text-lg font-semibold text-info disabled:opacity-40"
             >
-              {readOnly ? '보기 전용 (기록 안 됨)' : save.isPending ? '기록하는 중…' : `점검 결과 기록 (${done}/${items.length})`}
+              {recordGate.readOnly
+                ? '보기 전용 (기록 안 됨)'
+                : !recordGate.ok
+                  ? '점검 기록 권한 없음'
+                  : save.isPending
+                    ? '기록하는 중…'
+                    : `점검 결과 기록 (${done}/${items.length})`}
             </button>
           </div>
           {save.error && <div className="mt-2 text-sm text-down">{(save.error as Error).message}</div>}
@@ -712,6 +705,7 @@ export function OperatorScreen({ code }: { code: string }) {
             <div className="contents @4xl:flex @4xl:flex-col @4xl:gap-3">
               <Actions code={code} safety={std.safety} troubleN={std.section.trouble} docId={std.meta?.id} />
               <Ask code={code} />
+              <OperatorQuality code={code} className="order-4" />
               <StationAlarms code={code} />
               <Standard meta={std.meta} section={std.section} />
               <RecentUnits code={code} />

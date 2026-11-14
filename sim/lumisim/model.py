@@ -22,6 +22,65 @@ def load_factory(path: str | None = None) -> dict:
         return json.load(f)
 
 
+# 실행 MES 표(factory.json `mes`)가 없거나 빠진 항목이 있을 때 쓰는 기본값. shared/src/mes.ts와 같은 값이다
+MES_DEFAULTS: dict = {
+    'woLot': {'HL': 96, 'EM': 160, 'OSM': 120},
+    'woAhead': 3,
+    'repairDefault': {'minutes': 10, 'prob': 0.85},
+    'repairTechs': 1,
+    'midInspectHours': 4,
+    'ilkTimeoutSec': 3,
+    'ilkRetrySec': 1,
+    'healthIntervalSec': 60,
+    'shifts': [
+        {'code': 'D', 'name': '주간', 'startHour': 8, 'hours': 12},
+        {'code': 'N', 'name': '야간', 'startHour': 20, 'hours': 12},
+    ],
+    'pmReason': '계획 보전',
+    'noPlanReason': '생산 계획 없음',
+}
+
+
+def product_steps(line: dict) -> list[str]:
+    """투입 공정(release)부터 시리얼을 이어 쓰는 공정들 (mes.ts productSteps와 같은 규칙)"""
+    rel = line.get('release')
+    if not rel:
+        return []
+    out = [rel]
+    while True:
+        nxt = next((s for s in line['steps'] if s['serial'] == 'keep'
+                    and next((i.get('step') for i in s['inputs'] if i.get('step')), None) == out[-1]), None)
+        if nxt is None:
+            return out
+        out.append(nxt['code'])
+
+
+def mes_table(factory: dict) -> dict:
+    """factory.json의 `mes` 표. 없는 항목은 기본값으로, 설비 표는 공장 정의에서 다시 계산해 채운다"""
+    src = factory.get('mes') or {}
+    m = {**MES_DEFAULTS, **src}
+    if 'productSteps' not in src:
+        m['productSteps'] = {ln['code']: product_steps(ln) for ln in factory['lines']}
+    if 'stations' not in src:
+        st = {}
+        for ln in factory['lines']:
+            scope = set(m['productSteps'].get(ln['code'], ()))
+            steps = {s['code']: s for s in ln['steps']}
+            for sd in ln['stations']:
+                step = steps[sd['step']]
+                prev = None if step['serial'] == 'new' else next((i.get('step') for i in step['inputs'] if i.get('step')), None)
+                st[sd['code']] = {
+                    'faRequired': not sd.get('aux') and bool(sd.get('gate') or sd.get('measures')),
+                    'inspection': bool(sd.get('measures') or sd.get('detects')),
+                    'productScope': sd['step'] in scope,
+                    'prevStep': prev,
+                }
+        m['stations'] = st
+    m.setdefault('ngRule', {})
+    m.setdefault('pmMinutes', {})
+    return m
+
+
 def iso(dt: datetime) -> str:
     """UTC ISO 시각, 밀리초까지 (예: 2026-11-12T03:04:05.678Z). 시간대가 없는 값은 UTC로 본다"""
     dt = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)

@@ -15,7 +15,6 @@ import {
   type AlarmLive,
   type LossTimes,
   type AssistantRef,
-  type LineCode,
   type StationMaintenance,
   type StationState,
   type TraceNode,
@@ -24,73 +23,29 @@ import { LiveService } from '../live/live.service';
 import { MaintenanceService } from '../maintenance/maintenance.service';
 import { OperatorService } from '../operator/operator.service';
 import { ProductionService } from '../production/production.service';
+import { LINE_PROP, STATE_NAMES, STATION_PROP, fail, kst, lineArg, pct, r2, stationArg, stationRef, str, type Input, type ToolOutcome } from './assistant.common';
+import { MES_TOOL_DEFS, MesTools, mesToolLabel } from './assistant.mes-tools';
 import { StandardsIndex } from './standards.index';
 
-/** 도구 하나를 실행한 결과. data는 모델에게, summary·refs는 화면에 간다 */
-export interface ToolOutcome {
-  ok: boolean;
-  data: unknown;
-  summary: string;
-  refs: AssistantRef[];
-}
+// 다른 파일이 이 파일에서 가져가던 이름 (도우미는 assistant.common.ts로 옮겼다)
+export { STATE_NAMES, kst, resolveStation } from './assistant.common';
+export type { ToolOutcome } from './assistant.common';
 
-type Input = Record<string, unknown>;
-type Parsed<T> = { ok: true; v: T } | { ok: false; error: string };
-
-export const STATE_NAMES: Record<StationState, string> = {
-  RUN: '가동', IDLE: '투입 대기', BLOCKED: '배출 대기', DOWN: '고장', SETUP: '셋업', STOP: '계획 정지',
+const ALARM_KINDS = ['DOWN', 'LIMIT', 'QUALITY', 'SPC', 'CHECK', 'INTERLOCK', 'NCR', 'HOLD', 'FA', 'PDM', 'CHANGE', 'WO'] as const;
+export const ALARM_KIND_NAMES: Record<string, string> = {
+  DOWN: '고장', LIMIT: '공정값 이탈', QUALITY: '불량률 상승', SPC: 'SPC 이상', CHECK: '작업 전 점검 이상', SCENARIO: '시나리오',
+  INTERLOCK: '인터록 거부', NCR: '불량 처리(MRB) 대기', HOLD: 'Hold', FA: '초물·중물·종물 불합격', PDM: '예지 보전(진동)', CHANGE: '4M 변경점 신고', WO: '작업지시·생산 계획',
 };
-const ALARM_KINDS = ['DOWN', 'LIMIT', 'QUALITY', 'SPC', 'CHECK'] as const;
-export const ALARM_KIND_NAMES: Record<string, string> = { DOWN: '고장', LIMIT: '공정값 이탈', QUALITY: '불량률 상승', SPC: 'SPC 이상', CHECK: '작업 전 점검 이상' };
-const LINE_CODES = LINES.map((l) => l.code);
 const MATERIALS = new Map(FACTORY.materials.map((m) => [m.code, m]));
 /** 같은 자재의 다른 LOT 대비 편중 판정 (추적 화면과 같은 기준) */
 const LOT_MIN_JUDGED = 20;
 const LOT_FLAG_Z = 3;
 const LOT_MIN_NG = 5;
 
-const pct = (v: number) => Math.round(v * 1000) / 10;
-const r2 = (v: number) => Math.round(v * 100) / 100;
 /** 분 → '35분' · '12.5시간' (모의 모드 답과 같은 표기) */
 const minText = (v: number | null) => (v == null ? '−' : v >= 120 ? `${(v / 60).toFixed(1)}시간` : `${Math.round(v)}분`);
 /** 측정값은 유효숫자 4자리로 (8.024999999999999 → 8.025). 크기가 제각각이라 소수 자릿수로 자르면 안 된다 */
 const sig4 = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? null : Number(v.toPrecision(4)));
-/** 가상 시각을 한국 시간 'MM-DD HH:mm'으로 */
-export function kst(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const d = new Date(Date.parse(iso) + 9 * 3_600_000);
-  return d.toISOString().slice(5, 16).replace('T', ' ');
-}
-const stationRef = (code: string): AssistantRef => ({ kind: 'station', id: code, label: `${code} ${STATIONS[code]?.name ?? ''}`.trim() });
-
-/** 코드·이름·이름 일부로 설비를 찾는다. 여러 개가 비슷하면 후보를 돌려준다 */
-export function resolveStation(q: string): { code: string } | { error: string; candidates: string[] } {
-  const s = q.trim();
-  const up = s.toUpperCase();
-  if (STATIONS[up]) return { code: up };
-  const all = Object.values(STATIONS);
-  const norm = (x: string) => x.replace(/\s+|\(.*?\)/g, '').toLowerCase();
-  const ns = norm(s);
-  const exact = all.filter((st) => norm(st.name) === ns);
-  if (exact.length === 1) return { code: exact[0].code };
-  const contains = all.filter((st) => norm(st.name).includes(ns) || (ns.length >= 3 && ns.includes(norm(st.name))));
-  if (contains.length === 1) return { code: contains[0].code };
-  // 두 글자 조각이 가장 많이 겹치는 설비
-  const grams = (x: string) => new Set([...norm(x)].map((_, i, a) => a.slice(i, i + 2).join('')).filter((g) => g.length === 2));
-  const qg = grams(s);
-  const scored = all
-    .map((st) => {
-      const g = grams(st.name);
-      let hit = 0;
-      for (const x of qg) if (g.has(x)) hit++;
-      return { code: st.code, score: qg.size ? hit / qg.size : 0 };
-    })
-    .sort((a, b) => b.score - a.score);
-  const pool = contains.length > 1 ? contains.map((c) => c.code) : scored.filter((x) => x.score >= 0.5).map((x) => x.code);
-  if (pool.length === 1) return { code: pool[0] };
-  if (scored[0]?.score >= 0.5 && scored[0].score > (scored[1]?.score ?? 0) + 0.2) return { code: scored[0].code };
-  return { error: `'${q}'에 맞는 설비를 하나로 정하지 못했습니다`, candidates: (pool.length ? pool : scored.slice(0, 5).map((x) => x.code)).slice(0, 6) };
-}
 
 /** 태그·검사값·부품 속성 키 → 이름·단위 */
 function signalName(station: string, key: string): { name: string; unit: string } {
@@ -99,38 +54,12 @@ function signalName(station: string, key: string): { name: string; unit: string 
   return { name: t?.name ?? key, unit: t?.unit ?? '' };
 }
 
-// ───────────── 입력 검사 ─────────────
-// 스트리밍 도구 입력(eager_input_streaming)은 서버가 스키마를 검사하지 않으므로 여기서 검사한다
-
-function str(input: Input, key: string, required: true): Parsed<string>;
-function str(input: Input, key: string, required: false): Parsed<string | undefined>;
-function str(input: Input, key: string, required: boolean): Parsed<string | undefined> {
-  const v = input[key];
-  if (v == null || v === '') return required ? { ok: false, error: `${key}가 필요합니다` } : { ok: true, v: undefined };
-  if (typeof v !== 'string') return { ok: false, error: `${key}는 문자열이어야 합니다` };
-  return { ok: true, v: v.trim() };
-}
-
-function lineArg(input: Input): Parsed<LineCode | undefined> {
-  const r = str(input, 'line', false);
-  if (!r.ok || r.v === undefined) return r as Parsed<undefined>;
-  const up = r.v.toUpperCase() as LineCode;
-  return LINE_CODES.includes(up) ? { ok: true, v: up } : { ok: false, error: `line은 ${LINE_CODES.join('·')} 중 하나입니다` };
-}
-
-function stationArg(input: Input, required: boolean): Parsed<string | undefined> | { ok: false; error: string; candidates: string[] } {
-  const r = required ? str(input, 'station', true) : str(input, 'station', false);
-  if (!r.ok || r.v === undefined) return r;
-  const hit = resolveStation(r.v);
-  return 'code' in hit ? { ok: true, v: hit.code } : { ok: false, error: hit.error, candidates: hit.candidates };
-}
-
 // ───────────── 도구 정의 ─────────────
 
-const LINE_PROP = { type: 'string', enum: LINE_CODES, description: 'HL 헤드램프 · EM 전장 모듈(LED·BMS) · OSM 사이드미러' };
-const STATION_PROP = { type: 'string', description: '설비 코드(예: OSM-FT-01) 또는 설비 이름' };
-
-/** 모델에 알려 주는 도구 목록. 모두 조회만 한다 (설비 조작 도구는 일부러 두지 않았다) */
+/**
+ * 모델에 알려 주는 도구 목록. 모두 조회만 한다 (설비 조작 도구는 일부러 두지 않았다).
+ * 실행 MES(작업지시·인터록·NCR·Hold)·품질 체계·분석 도구는 assistant.mes-tools.ts에 있다. 그것들도 조회만 한다
+ */
 export const TOOL_DEFS: Anthropic.Beta.Messages.BetaTool[] = [
   {
     name: 'factory_overview',
@@ -144,7 +73,9 @@ export const TOOL_DEFS: Anthropic.Beta.Messages.BetaTool[] = [
   },
   {
     name: 'list_alarms',
-    description: '최근 알람 목록(새것부터). 설비·종류·미확인 여부로 거를 수 있다. 종류: DOWN 고장, LIMIT 공정값 규격 이탈, QUALITY 불량률 상승, SPC 관리도 규칙 위반.',
+    description:
+      '최근 알람 목록(새것부터). 설비·종류·미확인 여부로 거를 수 있다. 종류: DOWN 고장, LIMIT 공정값 규격 이탈, QUALITY 불량률 상승, SPC 관리도 규칙 위반, CHECK 작업 전 점검 이상, ' +
+      'INTERLOCK 인터록 거부, NCR 불량 처리 MRB 대기, HOLD Hold 설정, FA 초·중·종물 불합격, PDM 예지 보전 진동 경고·위험, CHANGE 변경점 신고, WO 작업지시·생산 계획 없음.',
     input_schema: {
       type: 'object',
       properties: {
@@ -224,6 +155,7 @@ export const TOOL_DEFS: Anthropic.Beta.Messages.BetaTool[] = [
       additionalProperties: false,
     },
   },
+  ...MES_TOOL_DEFS,
 ].map((t) => ({ ...t, eager_input_streaming: true }) as Anthropic.Beta.Messages.BetaTool);
 
 /** 화면에 보일 도구 호출 이름 */
@@ -243,7 +175,7 @@ export function toolLabel(name: string, input: Input): string {
     case 'lot_trace': return `LOT 영향 범위 조회${arg('lot')}`;
     case 'lot_quality': return `LOT별 불량률 비교${arg('material')}`;
     case 'search_standards': return `작업표준서 검색${arg('query')}`;
-    default: return name;
+    default: return mesToolLabel(name, input) ?? name;
   }
 }
 
@@ -256,6 +188,7 @@ export class AssistantTools {
     private readonly standards: StandardsIndex,
     private readonly operator: OperatorService,
     private readonly maintenance: MaintenanceService,
+    private readonly mes: MesTools,
   ) {}
 
   async run(name: string, input: Input): Promise<ToolOutcome> {
@@ -274,7 +207,7 @@ export class AssistantTools {
         case 'lot_trace': return await this.lot(input);
         case 'lot_quality': return await this.lotQuality(input);
         case 'search_standards': return this.searchStandards(input);
-        default: return fail(`알 수 없는 도구 ${name}`);
+        default: return MesTools.has(name) ? await this.mes.run(name, input) : fail(`알 수 없는 도구 ${name}`);
       }
     } catch (e) {
       return fail((e as Error).message);
@@ -700,8 +633,4 @@ export class AssistantTools {
 
 function alarmView(a: AlarmLive) {
   return { id: a.id, t: kst(a.t), station: a.station, severity: a.severity, kind: a.kind, title: a.title, detail: a.detail ?? null, acked: a.acked };
-}
-
-function fail(error: string, extra?: Record<string, unknown>): ToolOutcome {
-  return { ok: false, data: { error, ...extra }, summary: error, refs: [] };
 }

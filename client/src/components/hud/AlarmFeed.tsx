@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { STATIONS, type AlarmLive } from '@lumitwin/shared';
-import { useAccess } from '@/lib/access';
 import { api } from '@/lib/api';
+import { useGate } from '@/lib/auth';
 import { cx, kst } from '@/lib/format';
 import { useLive } from '@/lib/live';
 
@@ -20,6 +20,13 @@ const KIND: Record<AlarmLive['kind'], string> = {
   QUALITY: '품질',
   SCENARIO: '시나리오',
   CHECK: '점검',
+  INTERLOCK: '인터록',
+  NCR: '불량 처리',
+  HOLD: 'Hold',
+  FA: '초물',
+  PDM: '예지 보전',
+  CHANGE: '변경점',
+  WO: '작업지시',
 };
 
 type Filter = 'all' | 'open' | 'quality';
@@ -30,15 +37,27 @@ export function AlarmFeed() {
   const events = useLive((s) => s.events);
   const select = useLive((s) => s.select);
   const ackLocal = useLive((s) => s.ackLocal);
-  const { readOnly } = useAccess();
+  // 공개 링크 보기 전용이면 확인 버튼을 감추고(지금처럼), 로그인 안 했거나 권한이 없으면 흐리게 막고 이유를 title로 보여 준다
+  const gate = useGate('alarm.ack');
+  const [err, setErr] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('open');
   const list = alarms.filter((a) => (filter === 'open' ? !a.acked : filter === 'quality' ? a.kind !== 'DOWN' : true));
   const open = alarms.filter((a) => !a.acked).length;
 
+  // 서버가 받아 준 뒤에만 확인 표시를 한다 (거절되면 이유를 잠깐 보여 준다)
   const ack = async (id: number) => {
-    ackLocal(id);
-    await api.post(`/live/alarms/${id}/ack`).catch(() => {});
+    try {
+      await api.post(`/live/alarms/${id}/ack`);
+      ackLocal(id);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
   };
+  useEffect(() => {
+    if (!err) return;
+    const t = setTimeout(() => setErr(null), 5000);
+    return () => clearTimeout(t);
+  }, [err]);
 
   return (
     <div className="panel pointer-events-auto flex min-h-0 flex-1 flex-col">
@@ -74,15 +93,30 @@ export function AlarmFeed() {
               <div className="text-[13px] leading-snug">{a.title}</div>
               {a.detail && <div className="text-[11px] leading-snug text-sub">{a.detail}</div>}
             </button>
-            {!a.acked && !readOnly && (
+            {!a.acked && !gate.readOnly && (
               // 터치 화면에는 마우스 올림이 없으므로 확인 버튼을 늘 보인다
-              <button onClick={() => ack(a.id)} className="h-6 shrink-0 self-center rounded bg-white/10 px-1.5 text-[11px] opacity-0 group-hover:opacity-100 hover:bg-white/20 focus-visible:opacity-100 pointer-coarse:opacity-100">
+              <button
+                onClick={() => ack(a.id)}
+                disabled={!gate.ok}
+                title={gate.title}
+                className={cx(
+                  'h-6 shrink-0 self-center rounded bg-white/10 px-1.5 text-[11px] opacity-0',
+                  gate.ok
+                    ? 'group-hover:opacity-100 hover:bg-white/20 focus-visible:opacity-100 pointer-coarse:opacity-100'
+                    : 'cursor-not-allowed group-hover:opacity-40 focus-visible:opacity-40 pointer-coarse:opacity-40',
+                )}
+              >
                 확인
               </button>
             )}
           </div>
         ))}
       </div>
+      {err && (
+        <div role="alert" className="border-t border-line px-3 py-1.5 text-[11px] text-down">
+          알람 확인 실패: {err}
+        </div>
+      )}
       {events[0] && (
         <div className="border-t border-line px-3 py-1.5 text-[11px] text-sub">
           <span className="num text-dim">{kst(events[0].t)}</span> {events[0].message}
