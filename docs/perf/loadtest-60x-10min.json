@@ -1,0 +1,146 @@
+{
+  "startedAt": "2026-11-13T15:58:16.305Z",
+  "minutes": 10,
+  "speed": 60,
+  "mqtt": {
+    "perSec": {
+      "tags": 42.3,
+      "sim/event": 0.2,
+      "amr": 4.2,
+      "sim/status": 1.1,
+      "unit": 40.5,
+      "state": 102.2,
+      "ilk/req": 17.6,
+      "ilk/res": 17.6,
+      "insp": 0.3,
+      "health": 18,
+      "repair": 0,
+      "change": 0.2,
+      "cmd": 0,
+      "wo/req": 0,
+      "wo/res": 0
+    },
+    "interlock": {
+      "n": 10574,
+      "p50": 0.2,
+      "p95": 1,
+      "p99": 26.7,
+      "max": 94.7,
+      "unanswered": 0,
+      "verdicts": {
+        "OK": 10574
+      }
+    },
+    "workOrder": {
+      "n": 15,
+      "p50": 0.9,
+      "p95": 22.1
+    }
+  },
+  "sim": {
+    "keepUpMin": 96.9,
+    "keepUpAvg": 100
+  },
+  "mes": {
+    "inboundPerSecAvg": 215.6,
+    "memMbStart": 187,
+    "memMbEnd": 287,
+    "memMbMax": 287,
+    "writerEnd": {
+      "queued": 131,
+      "written": 82965,
+      "dropped": 0,
+      "runId": 349
+    }
+  },
+  "db": {
+    "sizeMb": 854,
+    "rows": {
+      "process_record": 912882,
+      "production_unit": 221373,
+      "material_lot_use": 545586,
+      "state_event": 2447137,
+      "alarm": 2974,
+      "work_order": 73,
+      "interlock_log": 4,
+      "ncr": 33,
+      "hold": 4,
+      "change_point": 305,
+      "inspection": 507,
+      "health_sample": 27098,
+      "action_log": 71
+    }
+  },
+  "api": {
+    "users": 20,
+    "seconds": 30,
+    "requests": 30986,
+    "rps": 1032.9,
+    "p50": 15.1,
+    "p95": 40.4,
+    "p99": 74,
+    "errors": {},
+    "byEndpoint": {
+      "/live/snapshot": {
+        "n": 2581,
+        "p50": 14.7,
+        "p95": 40.5
+      },
+      "/live/losses": {
+        "n": 2583,
+        "p50": 9.6,
+        "p95": 20.9
+      },
+      "/live/spc": {
+        "n": 2581,
+        "p50": 9.4,
+        "p95": 20
+      },
+      "/orders": {
+        "n": 2583,
+        "p50": 9.1,
+        "p95": 20.6
+      },
+      "/ncr": {
+        "n": 2585,
+        "p50": 9.2,
+        "p95": 22
+      },
+      "/maintenance/health": {
+        "n": 2579,
+        "p50": 18.3,
+        "p95": 44.6
+      },
+      "/production/units?limit=50": {
+        "n": 2583,
+        "p50": 28,
+        "p95": 42.5
+      },
+      "/production/defects": {
+        "n": 2583,
+        "p50": 32.2,
+        "p95": 49.1
+      },
+      "/changes": {
+        "n": 2586,
+        "p50": 20.6,
+        "p95": 37.2
+      },
+      "/reports/shifts": {
+        "n": 2582,
+        "p50": 21,
+        "p95": 39.8
+      },
+      "/maintenance": {
+        "n": 2582,
+        "p50": 9.5,
+        "p95": 44.7
+      },
+      "/energy": {
+        "n": 2578,
+        "p50": 11.8,
+        "p95": 205.9
+      }
+    }
+  }
+}

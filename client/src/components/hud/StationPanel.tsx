@@ -4,8 +4,8 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useEffect, useState, type ReactNode } from 'react';
 import { LINES, STATIONS, type SpcChart, type StationState, type TagDef } from '@lumitwin/shared';
-import { READ_ONLY_TITLE, useAccess } from '@/lib/access';
 import { api, simCommand } from '@/lib/api';
+import { useGate } from '@/lib/auth';
 import { cx, duration, GRADE_LABEL, KIND_LABEL, kst, num, pct, STATE_COLOR, STATE_LABEL } from '@/lib/format';
 import { useLive } from '@/lib/live';
 import { defectName, refName } from '@/lib/names';
@@ -97,7 +97,9 @@ export function StationPanel() {
 
   const spc = useQuery({ queryKey: ['spc', code], queryFn: () => api.get<SpcChart[]>(`/live/spc/${code}`), enabled: !!code && spcOpen, refetchInterval: 3000 });
   const op = useMutation({ mutationFn: (o: 'stop' | 'start' | 'repair' | 'fail') => simCommand({ action: 'station', code: code!, op: o }) });
-  const { readOnly } = useAccess();
+  // 정지·재가동·고장 주입은 설비 조작 권한, 수리 완료는 보전 권한 (서버 /sim/station도 같은 기준. 공개 링크 보기 전용이 먼저)
+  const opGate = useGate('station.op');
+  const repairGate = useGate('station.repair');
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && select(null);
@@ -108,7 +110,9 @@ export function StationPanel() {
   if (!def || !line) return null;
   const state = live?.state ?? 'IDLE';
   const since = live && simT ? (Date.parse(simT) - Date.parse(live.since)) / 1000 : NaN;
-  const ideal = def.cycle > 0 ? def.cycle / ((def.slots ?? 1) * (def.batch ?? 1)) : 0;
+  // 연배 분할(split) 공정은 한 사이클에 개체가 split개 나온다 (실시간 OEE의 이상 사이클과 같은 식)
+  const split = line.steps.find((x) => x.code === def.step)?.split ?? 1;
+  const ideal = def.cycle > 0 && !def.aux ? def.cycle / ((def.slots ?? 1) * (def.batch ?? 1) * split) : 0;
   const times = live?.stateSec ?? {};
   const total = STATE_ORDER.reduce((a, k) => a + (times[k] ?? 0), 0);
   const mine = units.filter((u) => u.station === def.code).slice(0, 8);
@@ -299,17 +303,20 @@ export function StationPanel() {
               ['fail', '고장 주입'],
               ['repair', '수리 완료'],
             ] as const
-          ).map(([k, t]) => (
-            <button
-              key={k}
-              disabled={op.isPending || readOnly}
-              title={readOnly ? READ_ONLY_TITLE : undefined}
-              onClick={() => op.mutate(k)}
-              className={cx('rounded border border-line py-1.5 hover:bg-white/10 disabled:opacity-40', k === 'fail' && 'text-down')}
-            >
-              {t}
-            </button>
-          ))}
+          ).map(([k, t]) => {
+            const g = k === 'repair' ? repairGate : opGate;
+            return (
+              <button
+                key={k}
+                disabled={op.isPending || !g.ok}
+                title={g.title}
+                onClick={() => op.mutate(k)}
+                className={cx('rounded border border-line py-1.5 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40', k === 'fail' && 'text-down')}
+              >
+                {t}
+              </button>
+            );
+          })}
         </div>
         {op.error && <div className="mt-1 text-xs text-down">{(op.error as Error).message}</div>}
         <Link href={`/operator/${def.code}`} className="mt-2 block text-xs text-info hover:underline">

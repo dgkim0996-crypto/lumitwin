@@ -8,6 +8,7 @@ dist-test/
 .local-db/
 server/src/generated/
 server/storage/
+server/.auth-secret
 sim/.venv/
 tools/whisper/.venv/
 tools/whisper/.models/

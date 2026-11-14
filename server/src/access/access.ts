@@ -22,8 +22,11 @@ export function accessConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Acces
   return { mode: v === 'all' || v === 'off' ? v : 'tunnel', controlKey: (env.CONTROL_KEY ?? '').trim() };
 }
 
-/** 보기 전용이어도 받는 쓰기 요청: AI 비서 질문과 음성 받아쓰기 (공장 상태를 바꾸지 않는다) */
-const ALLOWED_WRITES = new Set(['/api/v1/assistant/chat', '/api/v1/assistant/transcribe']);
+/**
+ * 보기 전용이어도 받는 쓰기 요청: AI 비서 질문과 음성 받아쓰기 (공장 상태를 바꾸지 않는다), 로그아웃 (권한을 줄이기만 한다).
+ * 로그인은 받지 않는다: 공개 링크 방문자는 시연 계정으로도 로그인할 수 없다 (제어 키를 넣은 시연자 화면만)
+ */
+const ALLOWED_WRITES = new Set(['/api/v1/assistant/chat', '/api/v1/assistant/transcribe', '/api/v1/auth/logout']);
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /** Cloudflare 가장자리 서버가 붙이는 머리글이 있으면 공개 링크로 들어온 요청이다 */

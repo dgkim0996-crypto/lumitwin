@@ -16,6 +16,7 @@ import time
 
 from .engine import Sim, resync_clock
 from .model import load_factory
+from .mqtt_io import REPLY_ACTION
 
 
 def handle(sim: Sim, cmd: dict, factory: dict, io) -> Sim:
@@ -30,12 +31,34 @@ def handle(sim: Sim, cmd: dict, factory: dict, io) -> Sim:
         speed = sim.speed
         sim = Sim(factory, io, speed=speed)
         sim.event('reset', '시뮬레이션 초기화')
+        # 새 실행 시각을 담은 상태를 먼저 보낸다. 첫 작업지시·인터록 요청이 MES에 먼저 닿으면 이전 실행으로 처리된다
+        sim.publish_status()
         print('[sim] 초기화', flush=True)
     elif action == 'scenario':
         sim.scenario(str(cmd.get('id')), bool(cmd.get('on')))
     elif action == 'station':
         reason = cmd.get('reason')
         sim.station_op(str(cmd.get('code')), str(cmd.get('op')), str(reason)[:40] if reason else None)
+    # ── 실행 MES (P9) ──
+    elif action == REPLY_ACTION:
+        # MES 응답 (인터록·작업지시). mqtt_io가 토픽을 붙여 명령 큐로 넘긴다
+        if isinstance(cmd.get('msg'), dict):
+            sim.on_reply(str(cmd.get('topic')), cmd['msg'])
+    elif action == 'disposition':
+        sim.dispose(str(cmd.get('serial')), str(cmd.get('decision')))
+    elif action == 'release':
+        sim.release_hold([str(s) for s in cmd.get('serials') or ()])
+    elif action == 'scrap':
+        sim.scrap_hold([str(s) for s in cmd.get('serials') or ()])
+    elif action == 'lot-hold':
+        sim.lot_hold(str(cmd.get('material')), str(cmd.get('lot')))
+    elif action == 'wo-cancel':
+        try:
+            sim.wo_cancel(str(cmd.get('line')), int(cmd.get('id')))
+        except (TypeError, ValueError):
+            print(f'[sim] 작업지시 중단 명령 형식 오류: {cmd!r}'[:120], flush=True)
+    elif action == 'change':
+        sim.user_change(cmd)
     return sim
 
 
@@ -68,7 +91,9 @@ def start_plc(factory: dict, mqtt_io, endpoint: str):
     except Exception as e:
         mqtt_io.close()
         raise SystemExit(f'[sim] OPC UA 서버를 열지 못했습니다 ({endpoint}): {e}')
-    print(f'[sim] 가상 PLC(OPC UA) 열림 · {endpoint} · 설비 신호는 엣지 게이트웨이가 MQTT로 옮긴다', flush=True)
+    print(f'[sim] 가상 PLC(OPC UA) 열림 · {endpoint} · 설비 신호는 엣지 게이트웨이가 MQTT로 옮긴다'
+          f' · MES 요청(인터록 {sum(k == "ilk" for k, _ in plc.hs)} · 작업지시 {sum(k == "wo" for k, _ in plc.hs)})은 PLC 태그 핸드셰이크', flush=True)
+    # MES 응답은 MQTT로 직접 받지 않고 엣지가 PLC 태그에 써 준 것을 받는다 (PlcIO가 명령 큐를 PLC에 이어 준다)
     return PlcIO(mqtt_io, plc)
 
 
@@ -80,6 +105,7 @@ def run_live(args) -> None:
     if args.link == 'opcua':
         io = start_plc(factory, io, args.opcua)
     sim = Sim(factory, io, speed=args.speed, seed=args.seed)
+    sim.publish_status()  # 첫 작업지시 요청보다 실행 시작(상태)이 MES에 먼저 닿게
     n = sum(len(ln['stations']) for ln in factory['lines'])
     print(f'[sim] 가상 공장 시작 · 라인 {len(factory["lines"])} · 설비 {n} · AMR {len(sim.amrs)} · {sim.speed:g}배속', flush=True)
     # 멈춤 감시: 메인 루프가 STALL_SEC 넘게 돌지 않으면 모든 스레드의 스택을 stderr에 남긴다.
@@ -94,7 +120,11 @@ def run_live(args) -> None:
                 faulthandler.dump_traceback_later(stall_sec, repeat=True, file=sys.stderr)
                 beat = now
             while not io.cmds.empty():
-                sim = handle(sim, io.cmds.get_nowait(), factory, io)
+                cmd = io.cmds.get_nowait()
+                try:
+                    sim = handle(sim, cmd, factory, io)
+                except Exception as e:  # MES가 보낸 명령 하나가 잘못돼도 시뮬레이터는 계속 돈다
+                    print(f'[sim] 명령 처리 실패 ({type(e).__name__}: {e}): {cmd!r}'[:200], flush=True)
             if not sim.running:
                 if now - paused_beat >= 1.0:
                     sim.publish_status()
@@ -148,6 +178,12 @@ def run_offline(args) -> None:
         final = [s for s in ln['stations'] if s['step'] == ln['finalStep']]
         out = sum(st.ok[s['code']] for s in final)
         print(f'{ln["short"]} 완성 {out}개 · 시간당 {out / args.hours:.1f}개 (목표 택트 {ln["taktSec"]}s → {3600 / ln["taktSec"]:.0f}개/h)')
+    # 실행 MES (오프라인: 자동 작업지시·기본 불량 판정)
+    for code, lx in sim.lines.items():
+        print(f'{code} 작업지시 {lx.local_n}건 · 수리 성공 {lx.repaired} · 폐기 {lx.scrapped} · 지금 기종 {lx.status()["variant"] or "-"}')
+    worn = sorted(((st.wear, st.code) for st in sim.stations.values() if st.health), reverse=True)[:5]
+    if worn:
+        print('마모 상위:', ', '.join(f'{c} {w:.2f}' for w, c in worn))
 
 
 def main() -> None:

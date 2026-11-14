@@ -13,6 +13,23 @@ export const TOPICS = {
   simEvent: `${TOPIC_ROOT}/sim/event`,
   edgeStatus: `${TOPIC_ROOT}/edge/status`,
   cmd: `${TOPIC_ROOT}/cmd`,
+  // ── 실행 MES (P9). 요청·응답은 같은 reqId로 짝짓는다 ──
+  /** 설비 → MES 투입 확인 요청 (인터록 게이트 설비만) */
+  ilkReq: (line: string, station: string) => `${TOPIC_ROOT}/${line}/${station}/ilk/req`,
+  /** MES → 설비 투입 확인 응답 */
+  ilkRes: (line: string, station: string) => `${TOPIC_ROOT}/${line}/${station}/ilk/res`,
+  /** 라인 → MES 다음 작업지시 요청 */
+  woReq: (line: string) => `${TOPIC_ROOT}/${line}/wo/req`,
+  /** MES → 라인 작업지시 응답 */
+  woRes: (line: string) => `${TOPIC_ROOT}/${line}/wo/res`,
+  /** 설비 → MES 4M 변경점 (시뮬레이터가 감지: 교대·수리·LOT·기종 변경) */
+  change: (line: string, station: string) => `${TOPIC_ROOT}/${line}/${station}/change`,
+  /** 설비 → MES 초·중·종물 검사 기록 */
+  insp: (line: string, station: string) => `${TOPIC_ROOT}/${line}/${station}/insp`,
+  /** 설비 → MES 상태 감시 신호 (진동·전류·온도, 가상 1분마다). 예지 보전용 */
+  health: (line: string, station: string) => `${TOPIC_ROOT}/${line}/${station}/health`,
+  /** 라인 수리대 → MES 수리·재작업 결과 */
+  repair: (line: string) => `${TOPIC_ROOT}/${line}/repair`,
 } as const;
 
 export interface TagsMsg {
@@ -51,6 +68,139 @@ export interface UnitMsg {
   cycle: number;
   /** 시뮬레이터만 아는 진실: 검사를 빠져나간 잠재 불량 (출하 유출) */
   escaped?: string[];
+  /** 기종 코드 (LineDef.variants). 작업지시 대상 제품 공정에서만 */
+  variant?: string;
+  /** 작업지시 ID (WorkOrder.id) */
+  wo?: number;
+  /** 이 개체가 이 설비의 초물이다 (변경점 뒤 첫 개체) */
+  fa?: boolean;
+  /** 수리·재작업 뒤 다시 검사받은 개체 */
+  reinspect?: boolean;
+  /** 작업지시의 마지막 투입 개체 (종물 검사 대상) */
+  woLast?: boolean;
+  /** 인터록 게이트에서 MES가 응답하지 않아(시간 초과) 확인 없이 통과시킨 개체 */
+  ilkSkip?: boolean;
+}
+
+// ─────────────── 실행 MES 메시지 (P9) ───────────────
+
+/** 인터록 거부 사유 코드 */
+export type InterlockCode =
+  | 'ROUTE' // 앞 공정을 안 거쳤거나 마지막 판정이 OK가 아님
+  | 'NG' // 불량 판정 뒤 처리(수리·폐기)가 안 끝남
+  | 'HOLD' // Hold(격리) 대상 시리얼·LOT
+  | 'WO' // 진행 중인 작업지시가 없음·작업지시와 다른 기종
+  | 'FA' // 이 설비의 초물이 아직 승인 안 됨 (초물 자신은 통과)
+  | 'REPAIR'; // 수리 뒤 재검사 순서가 아님
+
+/** 설비 → MES 투입 확인 요청 */
+export interface IlkReqMsg {
+  t: string;
+  reqId: string;
+  line: LineCode;
+  station: string;
+  step: string;
+  /** 이번 사이클의 주 개체 시리얼 (새로 발번하는 공정이면 발번할 시리얼) */
+  serial: string;
+  /** 같이 들어가는 하위 부품 시리얼 */
+  comps: string[];
+  /** 이번에 쓰는 자재 LOT (자재 코드 → LOT) */
+  lots: Record<string, string>;
+  variant?: string;
+  wo?: number;
+  /** 초물로 투입하는 개체 */
+  fa?: boolean;
+  /** 수리 뒤 재검사 투입 */
+  reinspect?: boolean;
+}
+
+/** MES → 설비 응답. WAIT은 거부가 아니라 잠시 뒤 다시 물어보라는 뜻 (초물 판정 대기) */
+export interface IlkResMsg {
+  t: string;
+  reqId: string;
+  serial: string;
+  verdict: 'OK' | 'NG' | 'WAIT';
+  code?: InterlockCode;
+  reason?: string;
+}
+
+/** MES가 라인에 내려 주는 작업지시 한 건 */
+export interface WoDispatch {
+  id: number;
+  code: string;
+  variant: string;
+  qty: number;
+}
+
+export interface WoReqMsg {
+  t: string;
+  reqId: string;
+  line: LineCode;
+  /** 방금 투입을 끝낸 작업지시 (있으면) */
+  finished?: { id: number; released: number };
+}
+
+export interface WoResMsg {
+  t: string;
+  reqId: string;
+  /** null이면 내려 줄 작업지시가 없다 (라인은 '생산 계획 없음'으로 선다) */
+  wo: WoDispatch | null;
+}
+
+export type ChangeCategory = 'MAN' | 'MACHINE' | 'MATERIAL' | 'METHOD';
+/** shift = 교대 작업자 변경 · repair = 고장 수리 뒤 재가동 · lot = 자재 LOT 변경 · changeover = 기종 변경 · condition = 공정 조건 변경 · pm = 예방·예지 보전 · user = 작업자 등록 */
+export type ChangeKind = 'shift' | 'repair' | 'lot' | 'changeover' | 'condition' | 'pm' | 'user';
+
+export interface ChangeMsg {
+  t: string;
+  /** 시뮬레이터가 매긴 변경점 번호 (실행 안에서 고유). 초물 검사가 이 번호를 가리킨다 */
+  id: string;
+  line: LineCode;
+  station: string;
+  category: ChangeCategory;
+  kind: ChangeKind;
+  detail: string;
+  /** 이 변경점 뒤 초물 검사가 필요한가 */
+  fa: boolean;
+}
+
+export type InspectionType = 'FIRST' | 'MID' | 'LAST';
+
+export interface InspMsg {
+  t: string;
+  line: LineCode;
+  station: string;
+  type: InspectionType;
+  serial: string;
+  result: 'OK' | 'NG';
+  /** 측정값 (설비의 measures 또는 사이클 태그) */
+  values: Record<string, number>;
+  /** 초물이면 어느 변경점의 초물인지 (ChangeMsg.id) */
+  change?: string;
+  variant?: string;
+}
+
+export interface HealthMsg {
+  t: string;
+  /** vib = 진동 RMS (mm/s) · cur = 구동 전류 (A) · temp = 베어링·모터 온도 (°C) */
+  v: { vib: number; cur: number; temp: number };
+}
+
+export type Disposition = 'REPAIR' | 'REWORK' | 'SCRAP' | 'UAI';
+
+export interface RepairMsg {
+  t: string;
+  line: LineCode;
+  serial: string;
+  /** 수리를 시작한 불량 */
+  defect: string;
+  action: Disposition;
+  /** 수리·재작업 성공 (SCRAP이면 false) */
+  ok: boolean;
+  /** 수리대에서 걸린 시간 (분, 가상) */
+  minutes: number;
+  /** 재검사를 받으러 돌아간 공정 (ok일 때) */
+  backTo?: string;
 }
 
 export type AmrState = 'IDLE' | 'TO_PICK' | 'LOADING' | 'MOVING' | 'UNLOADING' | 'RETURNING' | 'CHARGING';
@@ -82,6 +232,24 @@ export interface SimStatusMsg {
   warehouse: Record<string, number>;
   /** 출하 유출(검사를 빠져나간 잠재 불량) 누계 */
   escaped: Record<string, number>;
+  /** 라인별 실행 상태 (P9). 시뮬레이터가 아직 P9 이전이면 없다 */
+  lines?: Partial<Record<LineCode, SimLineStatus>>;
+}
+
+/** 라인 실행 상태 (P9): 지금 작업지시·기종, 불량 대기·수리대·격리 구역 개수 */
+export interface SimLineStatus {
+  /** 투입 중인 작업지시. released = 지금까지 투입한 수 */
+  wo: (WoDispatch & { released: number }) | null;
+  /** 투입 공정에 걸린 기종 */
+  variant: string | null;
+  /** MES에 작업지시를 요청하고 기다리는 중 */
+  waitingWo: boolean;
+  /** 불량 판정 뒤 처리(판정)를 기다리는 개체 */
+  ngPen: number;
+  /** 수리대에서 수리 중이거나 줄 선 개체 */
+  repair: number;
+  /** 인터록에 걸려 격리 구역에 있는 개체 */
+  quarantine: number;
 }
 
 export type DataLink = 'mqtt' | 'opcua';
@@ -108,11 +276,16 @@ export interface EdgeStatusMsg {
   skipped: number;
   /** 생산 실적 순번이 건너뛴 수 (빠진 기록) */
   gaps: number;
+  /**
+   * PLC 태그 핸드셰이크 (P9, 인터록·작업지시 요청/응답): 블록 수, MES로 넘긴 요청, PLC에 써 준 응답,
+   * 늦게 와서 버린 응답, 형식이 틀린 요청, MQTT가 끊긴 동안 버린 요청
+   */
+  handshake?: { ilk: number; wo: number; forwarded: number; answered: number; late: number; bad: number; dropped: number; [k: string]: number };
 }
 
 export interface SimEventMsg {
   t: string;
-  kind: 'scenario-on' | 'scenario-off' | 'reset' | 'speed' | 'pause' | 'resume' | 'failure' | 'repair' | 'lot-change';
+  kind: 'scenario-on' | 'scenario-off' | 'reset' | 'speed' | 'pause' | 'resume' | 'failure' | 'repair' | 'lot-change' | 'changeover' | 'wo' | 'pm';
   message: string;
   station?: string;
   scenario?: string;
@@ -125,9 +298,26 @@ export type SimCommand =
   | { action: 'reset' }
   | { action: 'scenario'; id: string; on: boolean }
   /** stop = 계획 정지 · setup = 셋업 · start = 재가동(정지·셋업 풀기) · fail = 고장 등록 · repair = 수리 완료. reason은 작업자가 고른 사유 */
-  | { action: 'station'; code: string; op: StationOp; reason?: string };
+  | { action: 'station'; code: string; op: StationOp; reason?: string }
+  // ── 실행 MES (P9) ──
+  /** 불량품 처리 판정: 수리대에서 수리·재작업 뒤 검출 공정으로 돌려보내 재검사 · 폐기 · 특채(그대로 다음 공정) */
+  | { action: 'disposition'; serial: string; decision: Disposition }
+  /** Hold 해제: 인터록에 걸려 격리 구역에 있던 개체를 걸렸던 공정 앞으로 돌려보낸다 */
+  | { action: 'release'; serials: string[] }
+  /** Hold 품 폐기: 격리 구역의 개체를 버린다 */
+  | { action: 'scrap'; serials: string[] }
+  /** 자재 LOT Hold: 그 LOT를 쓰고 있으면 바로 다른 LOT로 바꾼다 */
+  | { action: 'lot-hold'; material: string; lot: string }
+  /** 진행 중인 작업지시 중단: 라인이 투입을 멈추고 다음 작업지시를 요청한다 */
+  | { action: 'wo-cancel'; line: LineCode; id: number }
+  /** 작업자가 MES에 등록한 4M 변경점. id는 MES가 매긴 번호('U' + ChangePoint.id)로, 초물 검사가 이 번호를 가리킨다 (시뮬레이터는 ChangeMsg를 다시 보내지 않는다) */
+  | { action: 'change'; id: string; code: string; category: ChangeCategory; kind: ChangeKind; detail: string; fa: boolean };
 
-export const STATION_OPS = ['stop', 'setup', 'start', 'repair', 'fail'] as const;
+/** 화면의 시뮬레이터 제어 버튼이 /sim/* 로 보내는 명령. 나머지(P9 실행 명령)는 MES 서버가 판정한 뒤 직접 보낸다 */
+export type SimControlCommand = Extract<SimCommand, { action: 'speed' | 'pause' | 'resume' | 'reset' | 'scenario' | 'station' }>;
+
+/** stop = 계획 정지 · setup = 셋업 · start = 재가동 · repair = 수리 완료 · fail = 고장 등록 · pm = 예방·예지 보전 실시 (잠시 멈추고 마모를 되돌린다) */
+export const STATION_OPS = ['stop', 'setup', 'start', 'repair', 'fail', 'pm'] as const;
 export type StationOp = (typeof STATION_OPS)[number];
 
 export const SIM_SPEEDS = [1, 5, 20, 60] as const;
@@ -175,8 +365,12 @@ export interface AlarmLive {
   t: string;
   station: string;
   severity: 'info' | 'warn' | 'critical';
-  /** CHECK = 작업자가 태블릿의 작업 전 점검에서 이상을 표시함 */
-  kind: 'DOWN' | 'SPC' | 'LIMIT' | 'QUALITY' | 'SCENARIO' | 'CHECK';
+  /**
+   * CHECK = 작업자가 태블릿의 작업 전 점검에서 이상을 표시함
+   * P9: INTERLOCK = 투입 거부 · NCR = 불량 처리 판정 대기(MRB) · HOLD = 격리 · FA = 초·중·종물 불합격(수동 초물 판정 포함) · PDM = 예지 보전 경고
+   *     CHANGE = 4M 변경점 · WO = 작업지시 (계획 없음·완료)
+   */
+  kind: 'DOWN' | 'SPC' | 'LIMIT' | 'QUALITY' | 'SCENARIO' | 'CHECK' | 'INTERLOCK' | 'NCR' | 'HOLD' | 'FA' | 'PDM' | 'CHANGE' | 'WO';
   title: string;
   detail?: string;
   acked: boolean;
@@ -291,7 +485,8 @@ export interface ProductionUnitView {
   line: string;
   lastStep: string;
   lastStation: string;
-  status: 'WIP' | 'NG' | 'DONE' | 'CONSUMED';
+  /** P9: SCRAP(폐기) · HOLD(격리) · REPAIR(수리대) 추가 */
+  status: 'WIP' | 'NG' | 'DONE' | 'CONSUMED' | 'SCRAP' | 'HOLD' | 'REPAIR';
   defect: string | null;
   parentSerial: string | null;
   firstAt: string;

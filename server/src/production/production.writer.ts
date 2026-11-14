@@ -14,7 +14,11 @@ type Queued =
   | { kind: 'unit'; run: string; msg: UnitMsg }
   | { kind: 'state'; run: string; station: string; state: StationState; reason?: string; t: string }
   | { kind: 'alarm'; run: string; alarm: AlarmLive }
-  | { kind: 'ack'; run: string; id: number; t: string; alarmAt: string };
+  | { kind: 'ack'; run: string; id: number; t: string; alarmAt: string }
+  | { kind: 'status'; run: string; serial: string; status: UnitStatus };
+
+/** 실행 모듈(P9)이 바꾸는 개체 상태: 폐기·격리·수리대, 특채·Hold 해제 뒤 공정 중 */
+export type UnitStatus = 'SCRAP' | 'HOLD' | 'REPAIR' | 'WIP' | 'NG';
 
 /**
  * 실시간 계층의 이벤트를 모아 1초마다 한 번에 DB에 쓴다.
@@ -27,6 +31,7 @@ export class ProductionWriter implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | null = null;
   private flushing = false;
   private runIds = new Map<string, number>();
+  private runPending = new Map<string, Promise<number>>();
   private dropped = 0;
   written = 0;
   /** 마지막으로 확인한 실행 번호 (조회 API의 기본값) */
@@ -58,6 +63,14 @@ export class ProductionWriter implements OnModuleInit, OnModuleDestroy {
     await this.flush();
   }
 
+  /**
+   * 개체 상태 바꾸기 (P9 실행 모듈). 실적과 같은 큐로 순서대로 쓰므로, 같은 묶음에 뒤따르는 실적이 있으면 그 실적이 이긴다.
+   * 실행을 아직 모르면 버린다
+   */
+  setStatus(serial: string, status: UnitStatus): void {
+    this.push({ kind: 'status', run: this.live.currentRun ?? '', serial, status });
+  }
+
   private push(q: Queued): void {
     if (!q.run) return; // 실행을 아직 모르면(시뮬레이터 상태 메시지 전) 버린다
     this.queue.push(q);
@@ -71,10 +84,27 @@ export class ProductionWriter implements OnModuleInit, OnModuleDestroy {
   async resolveRun(startedAt: string): Promise<number> {
     const hit = this.runIds.get(startedAt);
     if (hit) return hit;
-    const row = await this.prisma.simRun.upsert({ where: { startedAt: new Date(startedAt) }, create: { startedAt: new Date(startedAt) }, update: {} });
-    this.runIds.set(startedAt, row.id);
-    this.currentRunId = row.id;
-    return row.id;
+    // 새 실행 알림을 실행·품질·기록 모듈이 거의 동시에 받아 같이 부른다. 하나만 DB에 가게 진행 중 요청을 나눠 쓴다
+    // (upsert 둘이 겹치면 둘 다 INSERT를 시도해 고유 키 충돌이 난다)
+    let p = this.runPending.get(startedAt);
+    if (!p) {
+      p = this.prisma.simRun
+        .upsert({ where: { startedAt: new Date(startedAt) }, create: { startedAt: new Date(startedAt) }, update: {} })
+        .catch(async (e: unknown) => {
+          // 다른 프로세스가 먼저 만든 경우 (고유 키 충돌) 그 줄을 읽는다
+          const row = await this.prisma.simRun.findUnique({ where: { startedAt: new Date(startedAt) } });
+          if (!row) throw e;
+          return row;
+        })
+        .then((row) => {
+          this.runIds.set(startedAt, row.id);
+          this.currentRunId = row.id;
+          return row.id;
+        })
+        .finally(() => this.runPending.delete(startedAt));
+      this.runPending.set(startedAt, p);
+    }
+    return p;
   }
 
   private async flush(): Promise<void> {
@@ -100,15 +130,25 @@ export class ProductionWriter implements OnModuleInit, OnModuleDestroy {
     const states = items.filter((q): q is Extract<Queued, { kind: 'state' }> => q.kind === 'state');
     const alarms = items.filter((q): q is Extract<Queued, { kind: 'alarm' }> => q.kind === 'alarm').map((q) => q.alarm);
     const acks = items.filter((q): q is Extract<Queued, { kind: 'ack' }> => q.kind === 'ack');
+    // 상태 바꾸기: 같은 묶음에서 그 뒤에 같은 시리얼의 실적이 오면 실적이 이긴다
+    const lastUnitAt = new Map<string, number>();
+    items.forEach((q, i) => q.kind === 'unit' && lastUnitAt.set(q.msg.serial, i));
+    const statusSet = new Map<string, UnitStatus>();
+    items.forEach((q, i) => {
+      if (q.kind === 'status' && !((lastUnitAt.get(q.serial) ?? -1) > i)) statusSet.set(q.serial, q.status);
+    });
 
     // 시리얼 마지막 상태 (같은 묶음 안에서 여러 번 나오면 마지막 것)
-    const unitRows = new Map<string, { item: string; line: string; step: string; station: string; status: string; defect: string | null; first: string; last: string }>();
+    const unitRows = new Map<string, { item: string; line: string; step: string; station: string; status: string; defect: string | null; first: string; last: string; variant: string | null; wo: number | null }>();
     const links: { child: string; parent: string }[] = [];
     const lotRows: Prisma.MaterialLotUseCreateManyInput[] = [];
     for (const u of units) {
       const prev = unitRows.get(u.serial);
       const status = u.result === 'NG' ? 'NG' : FINAL_STEPS.has(`${u.line}.${u.step}`) ? 'DONE' : 'WIP';
-      unitRows.set(u.serial, { item: u.item, line: u.line, step: u.step, station: u.station, status, defect: u.defect ?? null, first: prev?.first ?? u.start, last: u.t });
+      unitRows.set(u.serial, {
+        item: u.item, line: u.line, step: u.step, station: u.station, status, defect: u.defect ?? null, first: prev?.first ?? u.start, last: u.t,
+        variant: u.variant ?? prev?.variant ?? null, wo: u.wo ?? prev?.wo ?? null,
+      });
       for (const c of u.comps ?? []) links.push({ child: c, parent: u.serial });
       for (const [material, lot] of Object.entries(u.lots ?? {})) lotRows.push({ runId, material, lot, serial: u.serial, station: u.station, usedAt: new Date(u.t) });
     }
@@ -122,19 +162,22 @@ export class ProductionWriter implements OnModuleInit, OnModuleDestroy {
             runId, serial: u.serial, item: u.item, line: u.line, step: u.step, station: u.station, result: u.result, defect: u.defect ?? null,
             cycleSec: u.cycle, values: u.values, attrs: u.attrs ?? Prisma.DbNull, lots: u.lots ?? Prisma.DbNull,
             comps: u.comps ?? [], escaped: u.escaped ?? [], startedAt: new Date(u.start), endedAt: new Date(u.t),
+            variant: u.variant ?? null, workOrder: u.wo ?? null, fa: !!u.fa, reinspect: !!u.reinspect, ilkSkip: !!u.ilkSkip,
           })),
         });
         await tx.$executeRaw`
-          INSERT INTO production_unit (run_id, serial, item, line, last_step, last_station, status, defect, first_at, last_at)
-          SELECT ${runId}, s, i, l, st, sn, stat, d, f, la
+          INSERT INTO production_unit (run_id, serial, item, line, last_step, last_station, status, defect, first_at, last_at, variant, work_order)
+          SELECT ${runId}, s, i, l, st, sn, stat, d, f, la, v, w
           FROM unnest(${serials}::text[], ${rows.map((r) => r.item)}::text[], ${rows.map((r) => r.line)}::text[],
                       ${rows.map((r) => r.step)}::text[], ${rows.map((r) => r.station)}::text[], ${rows.map((r) => r.status)}::text[],
-                      ${rows.map((r) => r.defect)}::text[], ${rows.map((r) => new Date(r.first))}::timestamptz[], ${rows.map((r) => new Date(r.last))}::timestamptz[])
-               AS x(s, i, l, st, sn, stat, d, f, la)
+                      ${rows.map((r) => r.defect)}::text[], ${rows.map((r) => new Date(r.first))}::timestamptz[], ${rows.map((r) => new Date(r.last))}::timestamptz[],
+                      ${rows.map((r) => r.variant)}::text[], ${rows.map((r) => r.wo)}::int[])
+               AS x(s, i, l, st, sn, stat, d, f, la, v, w)
           ON CONFLICT (run_id, serial) DO UPDATE SET
             item = EXCLUDED.item, line = EXCLUDED.line, last_step = EXCLUDED.last_step, last_station = EXCLUDED.last_station,
             status = CASE WHEN production_unit.status = 'CONSUMED' THEN 'CONSUMED' ELSE EXCLUDED.status END,
-            defect = COALESCE(EXCLUDED.defect, production_unit.defect), last_at = EXCLUDED.last_at`;
+            defect = COALESCE(EXCLUDED.defect, production_unit.defect), last_at = EXCLUDED.last_at,
+            variant = COALESCE(EXCLUDED.variant, production_unit.variant), work_order = COALESCE(EXCLUDED.work_order, production_unit.work_order)`;
         if (links.length) {
           await tx.$executeRaw`
             UPDATE production_unit p SET parent_serial = x.parent, status = 'CONSUMED'
@@ -142,6 +185,13 @@ export class ProductionWriter implements OnModuleInit, OnModuleDestroy {
             WHERE p.run_id = ${runId} AND p.serial = x.child`;
         }
         if (lotRows.length) await tx.materialLotUse.createMany({ data: lotRows });
+      }
+      if (statusSet.size) {
+        const ss = [...statusSet];
+        await tx.$executeRaw`
+          UPDATE production_unit p SET status = x.status
+          FROM unnest(${ss.map(([s]) => s)}::text[], ${ss.map(([, st]) => st)}::text[]) AS x(serial, status)
+          WHERE p.run_id = ${runId} AND p.serial = x.serial AND p.status <> 'CONSUMED'`;
       }
       if (states.length) {
         await tx.stateEvent.createMany({ data: states.map((s) => ({ runId, station: s.station, state: s.state, reason: s.reason ?? null, at: new Date(s.t) })) });

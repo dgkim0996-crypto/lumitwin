@@ -14,7 +14,8 @@ async function bootstrap() {
   app.enableCors({ origin: (process.env.CORS_ORIGIN ?? 'http://localhost:5180').split(','), credentials: true });
   // 앞에 같은 서버의 프록시(Caddy·Next)가 있을 때만 X-Forwarded-For를 믿는다 (AI 비서 질문 한도를 사용자 IP별로 센다)
   app.set('trust proxy', 'loopback');
-  // 공개 링크(Cloudflare Tunnel)로 들어온 방문자는 보기 전용: 설비·시뮬레이터를 바꾸는 요청을 막는다 (READ_ONLY·CONTROL_KEY)
+  // 공개 링크(Cloudflare Tunnel)로 들어온 방문자는 보기 전용: 설비·시뮬레이터를 바꾸는 요청을 막는다 (READ_ONLY·CONTROL_KEY).
+  // 미들웨어라 로그인·역할 권한(AuthGuard, APP_GUARD)보다 먼저 돈다: 공개 링크에서는 로그인도 쓰기도 여기서 막힌다
   app.use(readOnlyGuard());
   const port = Number(process.env.API_PORT ?? 8790);
   // API_HOST=127.0.0.1 이면 같은 서버의 프록시만 받는다 (배포). 기본은 모든 주소

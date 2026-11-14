@@ -39,7 +39,9 @@
     "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w client",
     "test": "npm run test -w shared && npm run test -w server && npm run test:sim",
     "test:sim": "node scripts/sim.mjs --test",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "e2e": "node scripts/e2e.mjs",
+    "loadtest": "node scripts/loadtest.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

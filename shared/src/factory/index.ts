@@ -92,6 +92,14 @@ const SCENARIOS: ScenarioDef[] = [
     howToFind: '광축 불량 램프의 부품 계보에서 LED 모듈 시리얼을 따라가 마운터 장착 편차를 본다.',
   },
   {
+    id: 'EM-MT-BEARING', name: '칩 마운터 헤드 베어링 마모', line: 'EM',
+    summary: 'BMS 레인 칩 마운터의 헤드 구동 베어링 윤활이 떨어져 마모가 평소보다 20배 빨리 진행된다 (60배속에서 약 2~4분 뒤 진동 경고, 약 5~6분 뒤부터 고장 위험).',
+    effects: [{ station: 'EM-MT-B1', target: 'wear', mode: 'step', amount: 19 }],
+    symptom: '불량률·사이클은 아직 정상인데, 예지 보전 화면에서 칩 마운터 진동이 서서히 오르고 전류·온도가 뒤따른다. 진동이 B/C 경계(1.8 mm/s)를 넘으면 경고가 뜨고, 그대로 두면 "이음·진동" 고장으로 BMS 레인이 선다.',
+    rootCause: '헤드 구동 베어링 윤활 부족 → 마모 가속 (불량이 아니라 설비 수명 문제)',
+    howToFind: '예지 보전 화면에서 칩 마운터의 진동 추세와 남은 수명(RUL)을 보고, 경고가 뜨면 고장 전에 보전을 실시한다(마모가 되돌아간다). 시나리오를 켠 채면 다시 빨리 닳으므로, 끄는 것(윤활 계통 수리)이 근본 대책이다.',
+  },
+  {
     id: 'OSM-GREASE', name: '그리스 디스펜서 막힘', line: 'OSM',
     summary: '액추에이터 조립 셀의 그리스 디스펜서 노즐이 막혀 도포량이 준다.',
     effects: [{ station: 'OSM-AC-01', target: 'tag', key: 'grease_mg', mode: 'drift', rate: -0.6, limit: -30 }],
@@ -127,13 +135,14 @@ export const FACTORY: FactoryDef = {
   materials: MATERIALS,
   lines: LINES,
   transfers: [
-    { code: 'T-LED', name: 'LED 모듈 → 헤드램프 조립', from: { line: 'EM', step: 'LED_ROUTE' }, to: { line: 'HL', step: 'ASSY' }, lot: 20, amr: 'AMR-01', path: [[-17, -4], [-17, -10], [2, -10], [2, -19.5]] },
+    // 시험을 마친 LED 모듈 20개(4연 패널 5장 = 헤드램프 10대분, 약 12.5분 소요분)를 한 번에 싣는다
+    { code: 'T-LED', name: 'LED 모듈 → 헤드램프 조립', from: { line: 'EM', step: 'LED_TEST' }, to: { line: 'HL', step: 'ASSY' }, lot: 20, amr: 'AMR-01', path: [[-14, -4], [-14, -10], [2, -10], [2, -19.5]] },
     { code: 'T-HL-FG', name: '헤드램프 → 완제품 창고', from: { line: 'HL', step: 'PACK' }, to: { warehouse: 'FG' }, lot: 12, amr: 'AMR-02', path: [[54, -24], [56, -24], [56, -10], [61, -10]] },
     { code: 'T-EM-FG', name: 'BMS → 완제품 창고', from: { line: 'EM', step: 'BMS_PACK' }, to: { warehouse: 'FG' }, lot: 24, amr: 'AMR-03', path: [[20, 4], [20, 12], [61, 12]] },
     { code: 'T-OSM-FG', name: '사이드미러 → 완제품 창고', from: { line: 'OSM', step: 'PACK' }, to: { warehouse: 'FG' }, lot: 16, amr: 'AMR-04', path: [[27, 27], [30, 27], [30, 12.6], [61, 12.6]] },
   ],
   amrs: [
-    { code: 'AMR-01', name: '이동식 협동로봇 #1', home: [-17, -4], speed: 1.0, handleSec: 90, grade: 'weak', desc: 'LED 모듈을 전장 라인에서 헤드램프 조립 셀로 옮긴다. 협동로봇이 트레이를 싣고 내린다.' },
+    { code: 'AMR-01', name: '이동식 협동로봇 #1', home: [-14, -4], speed: 1.0, handleSec: 90, grade: 'weak', desc: '시험을 마친 LED 모듈을 전장 라인에서 헤드램프 조립 셀로 옮긴다. 협동로봇이 트레이를 싣고 내린다.' },
     { code: 'AMR-02', name: '이동식 협동로봇 #2', home: [54, -24], speed: 1.0, handleSec: 60, grade: 'confirmed', desc: '포장된 헤드램프를 완제품 창고로 옮기고 라벨 정보를 등록한다 (공개 사례 반영).' },
     { code: 'AMR-03', name: '이동식 협동로봇 #3', home: [20, 4], speed: 1.0, handleSec: 60, grade: 'assumed', desc: '포장된 BMS를 완제품 창고로 옮긴다.' },
     { code: 'AMR-04', name: '이동식 협동로봇 #4', home: [27, 27], speed: 1.0, handleSec: 60, grade: 'assumed', desc: '포장된 사이드미러를 완제품 창고로 옮긴다.' },

@@ -1,7 +1,11 @@
 import { DEFECT_NAMES, FACTORY, LINES, MAINT_MIN_FAILURES, STATIONS, type LineCode } from '@lumitwin/shared';
 import { SUGGESTIONS } from '../assistant.prompt';
 import { toolLabel, type AssistantTools, type ToolOutcome } from '../assistant.tools';
+import { josa } from './josa';
+import { MES_HELP, mesAnswer } from './mock.mes';
 import type { AssistantProvider, TurnInput } from './provider';
+
+export { josa } from './josa';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- 도구 결과(JSON)를 템플릿에 꽂기만 한다 */
 type Any = any;
@@ -23,7 +27,17 @@ interface Entities {
   material?: string;
   lot?: string;
   serial?: string;
+  /** 실행 MES 번호: HOLD-261113-001 · NCR-261113-0001 · WO-HL-261113-001 */
+  hold?: string;
+  ncr?: string;
+  wo?: string;
 }
+
+/** 실행 MES 번호. LOT 번호 모양(XX-yymmdd-nnn)과 겹치므로 LOT·설비 코드를 찾기 전에 빼낸다 */
+const HOLD_CODE = /\bHOLD-\d{6}-\d{3}\b/i;
+const NCR_CODE = /\bNCR-\d{6}-\d{4}\b/i;
+const WO_CODE = /\bWO-[A-Z]{2,3}-\d{6}-\d{3}\b/i;
+const MES_CODES = /\b(?:HOLD-\d{6}-\d{3}|NCR-\d{6}-\d{4}|WO-[A-Z]{2,3}-\d{6}-\d{3})\b/gi;
 
 /** 설비 이름에서 어느 설비인지 가리지 못하는 낱말 */
 const STATION_STOP = new Set(['검사기', '시험기', '테스터', '라인', '셀', '조립', '설비', '오븐', '사출기', '카메라식']);
@@ -60,20 +74,25 @@ function matchStation(m: string, line?: LineCode): string | undefined {
 /** 질문에서 설비·라인·불량·자재·LOT·시리얼을 뽑는다 */
 export function extractEntities(m: string, ctx: TurnInput['context'], memo: TurnInput['conv']['memo']): Entities {
   const e: Entities = {};
-  const lot = /\b([A-Z0-9_]+-\d{6}-\d{3})\b/i.exec(m);
+  e.hold = HOLD_CODE.exec(m)?.[0].toUpperCase();
+  e.ncr = NCR_CODE.exec(m)?.[0].toUpperCase();
+  e.wo = WO_CODE.exec(m)?.[0].toUpperCase();
+  const rest = m.replace(MES_CODES, ' ');
+  const lot = /\b([A-Z0-9_]+-\d{6}-\d{3})\b/i.exec(rest);
   if (lot) e.lot = lot[1].toUpperCase();
-  const serial = /\b([A-Z]{2}\d{11})\b/i.exec(m);
+  const serial = /\b([A-Z]{2}\d{11})\b/i.exec(rest);
   if (serial) e.serial = serial[1].toUpperCase();
 
   if (/헤드램프|\bHL\b/i.test(m)) e.line = 'HL';
   else if (/전장|BMS|\bEM\b|LED\s*모듈/i.test(m)) e.line = 'EM';
   else if (/사이드\s*미러|미러|\bOSM\b/i.test(m)) e.line = 'OSM';
 
-  const code = /\b([A-Z]{2,3}-[A-Z]{2,4}-[A-Z0-9]{1,3})\b/i.exec(m);
+  const code = /\b([A-Z]{2,3}-[A-Z]{2,4}-[A-Z0-9]{1,3})\b/i.exec(rest);
   if (code && STATIONS[code[1].toUpperCase()]) e.station = code[1].toUpperCase();
   else if (/이\s*설비|이\s*장비|선택한|여기/.test(m) && ctx.station) e.station = ctx.station;
   else if (/그\s*설비|거기|그\s*장비/.test(m) && memo.station) e.station = memo.station;
-  else e.station = matchStation(m, e.line);
+  // 라인 이름은 설비 이름 조각과 겹친다 ("헤드램프"의 '램프' → 램프 조립 셀). 라인은 위에서 따로 잡았으니 빼고 찾는다
+  else e.station = matchStation(rest.replace(/헤드램프|사이드\s*미러|전장\s*모듈/g, ' '), e.line);
 
   let best = 0;
   for (const [c, name] of Object.entries(DEFECT_NAMES)) {
@@ -130,6 +149,11 @@ export class MockProvider implements AssistantProvider {
     const wantsHow = /표준|절차|기준|방법|어떻게|조치|규격|점검|LOTO|안전|순서|대응/i.test(m);
     const wantsCause = /원인|왜|요인|이유/.test(m);
     const wantsDown = /고장|멈[춘췄추]|정지|다운|비가동/.test(m);
+
+    // 실행 MES·품질 체계·분석 질문(작업지시·인터록·NCR·Hold·변경점·관리계획서·교대·에너지·예지 보전)은 먼저 본다.
+    // "이 LOT Hold 영향 범위"처럼 LOT 번호가 함께 와도 Hold 질문이면 Hold로 답해야 하기 때문이다
+    const mes = await mesAnswer(m, e, call, wantsHow);
+    if (mes != null) return mes;
 
     if (e.lot) {
       const out = await call('lot_trace', { lot: e.lot });
@@ -270,21 +294,6 @@ export class MockProvider implements AssistantProvider {
 const STRONG_EFFECT = 0.8;
 /** 불량품의 이 비율(%) 이상이 한 LOT를 썼으면, 설비 공정값이 함께 갈려도 LOT를 먼저 의심한다 */
 const LOT_DOMINANT_PCT = 90;
-
-/** 받침에 맞춰 조사를 붙인다. 괄호 설명은 빼고 마지막 글자로 본다 */
-export function josa(word: string, [withBatchim, without]: [string, string]): string {
-  const base = word.replace(/\s*\([^)]*\)\s*$/, '').trim();
-  const last = base[base.length - 1] ?? '';
-  const code = last.charCodeAt(0);
-  let batchim: boolean | null = null;
-  if (code >= 0xac00 && code <= 0xd7a3) batchim = (code - 0xac00) % 28 !== 0;
-  else if (/[0-9]/.test(last)) batchim = '013678'.includes(last);
-  // 숫자 뒤 t는 "톤"(사출기 650t), 그 밖의 영문자는 이름으로 읽는다: 엘·엠·엔·알만 받침이 있다
-  else if (/\dt$/i.test(base)) batchim = true;
-  else if (/[a-z]/i.test(last)) batchim = 'lmnr'.includes(last.toLowerCase());
-  if (batchim === null) return `${word}${withBatchim}(${without})`;
-  return word + (batchim ? withBatchim : without);
-}
 
 // ───────────── 답 틀 ─────────────
 
@@ -553,6 +562,7 @@ function hourlyText(d: Any): string {
 }
 
 function helpText(): string {
-  return `모의 모드(API 키 없이 규칙으로 답하는 모드)라서 정해진 유형의 질문을 알아듣습니다. 이렇게 물어보세요.\n\n${SUGGESTIONS.map((s) => `- ${s}`).join('\n')}\n- 설비 이름(예: 진공증착기), LOT 번호, 시리얼을 넣어 물어보기\n\nANTHROPIC_API_KEY를 설정하면 Claude가 자유로운 질문에 답합니다.`;
+  const more = MES_HELP.filter((s) => !SUGGESTIONS.includes(s));
+  return `모의 모드(API 키 없이 규칙으로 답하는 모드)라서 정해진 유형의 질문을 알아듣습니다. 이렇게 물어보세요.\n\n${[...SUGGESTIONS, ...more].map((s) => `- ${s}`).join('\n')}\n- 설비 이름(예: 진공증착기), LOT 번호, 시리얼, NCR·Hold·작업지시 번호를 넣어 물어보기\n\nANTHROPIC_API_KEY를 설정하면 Claude가 자유로운 질문에 답합니다.`;
 }
 

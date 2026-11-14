@@ -386,6 +386,15 @@ export class LiveService implements OnModuleInit {
     this.events.emit('alarm', alarm);
   }
 
+  /**
+   * 다른 모듈(실행 MES·품질·예지 보전)이 올리는 알람 (P9). 시각을 주지 않으면 지금 가상 시각.
+   * 화면 알람 목록·소켓·DB(alarm 표)에 같은 길로 들어간다
+   */
+  raiseAlarm(station: string, severity: AlarmLive['severity'], kind: AlarmLive['kind'], title: string, detail?: string, t?: string): AlarmLive {
+    this.raise(station, severity, kind, title, detail, t ?? this.virtualNow ?? new Date().toISOString());
+    return this.alarms[0];
+  }
+
   /** 작업자 태블릿이 올린 알람 (작업 전 점검 이상). 시각은 지금 가상 시각 */
   raiseFromOperator(station: string, kind: AlarmLive['kind'], title: string, detail?: string): AlarmLive {
     this.raise(station, 'warn', kind, title, detail, this.virtualNow ?? new Date().toISOString());
@@ -627,12 +636,14 @@ export class LiveService implements OnModuleInit {
     this.alarms = [];
     this.stations = new Map(
       Object.values(STATIONS).map((def) => {
-        const utility = def.cycle <= 0;
+        const utility = def.cycle <= 0 || !!def.aux;
         const live: StationLive = {
           code: def.code, state: utility ? 'RUN' : 'IDLE', since: new Date().toISOString(), tags: {}, ok: 0, ng: 0, defects: {},
           oee: { availability: 1, performance: 0, quality: 1, oee: 0 }, stateSec: {},
         };
-        const idealSec = utility ? 0 : def.cycle / ((def.slots ?? 1) * (def.batch ?? 1));
+        // 연배 분할(split) 공정은 한 사이클에 개체 메시지가 split개 온다 (P9)
+        const split = LINES.find((l) => l.code === def.line)?.steps.find((s) => s.code === def.step)?.split ?? 1;
+        const idealSec = utility ? 0 : def.cycle / ((def.slots ?? 1) * (def.batch ?? 1) * split);
         return [def.code, {
           def, live, sinceMs: NaN, idealSec, utility, window: [], qualityOn: false,
           limitRun: new Map(), limitOn: new Set(), upAtMs: 0, spc: buildSeries(def), lastStartMs: NaN,

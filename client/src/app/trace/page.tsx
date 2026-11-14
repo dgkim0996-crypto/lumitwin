@@ -5,7 +5,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { FACTORY, LINES, type LineCode, type LotQuality, type LotTrace, type ProductionUnitView, type TraceNode } from '@lumitwin/shared';
 import { C, ChartCard, DataTable, Empty } from '@/components/charts/kit';
 import { SegmentedBar } from '@/components/charts/small';
-import { StatusBadge, TraceTree, UNIT_STATUS } from '@/components/hud/TraceDialog';
+import { UnitStatusBadge } from '@/components/execution/bits';
+import { HoldSection, unitStatusName, type HoldDraft } from '@/components/execution/HoldSection';
+import { TraceTree } from '@/components/hud/TraceDialog';
 import { LineSwitcher, PageShell, Stat } from '@/components/mes/PageShell';
 import { api } from '@/lib/api';
 import { cx, kst, pct } from '@/lib/format';
@@ -29,7 +31,7 @@ const TOP_STATUS = [
   { key: 'DONE', label: '완성 (출하됐을 수 있음 → 회수 검토)', color: C.series },
   { key: 'NG', label: '불량 판정', color: C.ng },
   { key: 'WIP', label: '공정 중 (격리 대상)', color: '#7b8798' },
-  { key: 'ETC', label: '기록 없음', color: '#3a4555' },
+  { key: 'ETC', label: '그 밖 (격리·수리대·폐기·기록 없음)', color: '#3a4555' },
 ] as const;
 
 interface LotRow extends LotQuality {
@@ -88,6 +90,14 @@ function downloadCsv(name: string, head: string[], rows: (string | number)[][]) 
   URL.revokeObjectURL(url);
 }
 
+type UnitTab = 'NG' | 'DONE' | 'HOLD' | 'SCRAP';
+const UNIT_TAB_EMPTY: Record<UnitTab, string> = {
+  NG: '이 라인에서 불량 판정된 제품이 아직 없습니다.',
+  DONE: '아직 완성된 제품이 없습니다.',
+  HOLD: '격리(Hold·인터록 거부)된 개체가 없습니다.',
+  SCRAP: '폐기된 개체가 없습니다.',
+};
+
 function Tabs<T extends string>({ value, onChange, items }: { value: T; onChange: (v: T) => void; items: readonly (readonly [T, string])[] }) {
   return (
     <div className="flex overflow-hidden rounded border border-line text-xs">
@@ -106,7 +116,14 @@ export default function TracePage() {
   const openTrace = useLive((s) => s.openTrace);
   const [serial, setSerial] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [tab, setTab] = useState<'NG' | 'DONE'>('NG');
+  const [tab, setTab] = useState<UnitTab>('NG');
+  // Hold 만들기 칸에 채울 초안 (계보·LOT 상세의 'Hold' 버튼)
+  const [holdDraft, setHoldDraft] = useState<HoldDraft | null>(null);
+  const holdBox = useRef<HTMLDivElement>(null);
+  const draftHold = (d: Omit<HoldDraft, 'n'>) => {
+    setHoldDraft({ ...d, n: Date.now() });
+    setTimeout(() => holdBox.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  };
   // 사용자가 고른 자재·LOT. 고르기 전에는 편중 의심이 있는 것을 자동으로 보여 준다
   const [pickedMaterial, setPickedMaterial] = useState<string | null>(null);
   const [pickedLot, setPickedLot] = useState<string | null>(null);
@@ -204,8 +221,8 @@ export default function TracePage() {
 
   return (
     <PageShell
-      title="추적 (시리얼·LOT)"
-      desc="제품 하나의 부품 계보를 아래로(정추적)·위로(역추적) 따라가고, 자재 LOT 단위로 불량률을 비교해 회수 범위를 뽑습니다. 모두 MES에 쌓인 공정 기록에서 계산합니다."
+      title="추적·Hold (시리얼·LOT)"
+      desc="제품 하나의 부품 계보를 아래로(정추적)·위로(역추적) 따라가고, 자재 LOT 단위로 불량률을 비교해 회수 범위를 뽑습니다. 의심 LOT·시리얼은 Hold를 걸어 게이트 설비에서 막고, 영향 범위를 본 뒤 해제하거나 폐기합니다. 모두 MES에 쌓인 공정 기록에서 계산합니다."
       filters={
         <>
           <LineSwitcher />
@@ -239,6 +256,8 @@ export default function TracePage() {
               items={[
                 ['NG', '불량'],
                 ['DONE', '완성'],
+                ['HOLD', '격리'],
+                ['SCRAP', '폐기'],
               ]}
             />
           }
@@ -271,7 +290,7 @@ export default function TracePage() {
                         <span className="block text-[11px] text-dim">{ITEM_NAMES[u.item] ?? u.item}</span>
                       </td>
                       <td className="px-2">
-                        <StatusBadge status={u.status} defect={u.defect} />
+                        <UnitStatusBadge status={u.status} defect={u.defect} />
                       </td>
                       <td className="num px-2 text-sub" title={stationName(u.lastStation)}>
                         {u.lastStation}
@@ -283,7 +302,7 @@ export default function TracePage() {
               </table>
             </div>
           ) : (
-            <Empty>{units.isLoading ? '불러오는 중…' : units.error ? (units.error as Error).message : tab === 'NG' ? '이 라인에서 불량 판정된 제품이 아직 없습니다.' : '아직 완성된 제품이 없습니다.'}</Empty>
+            <Empty>{units.isLoading ? '불러오는 중…' : units.error ? (units.error as Error).message : UNIT_TAB_EMPTY[tab]}</Empty>
           )}
         </ChartCard>
 
@@ -293,9 +312,18 @@ export default function TracePage() {
             subtitle="거친 공정의 조건·판정과 들어간 부품을 아래로 따라갑니다. 시리얼을 누르면 그 부품으로 옮겨 갑니다."
             right={
               serial && (
-                <button className="rounded border border-line px-2 py-0.5 text-xs text-sub hover:bg-white/10 hover:text-ink" onClick={() => openTrace(serial)}>
-                  창으로 보기
-                </button>
+                <div className="flex gap-1.5">
+                  <button
+                    className="rounded border border-warn/40 px-2 py-0.5 text-xs text-warn hover:bg-warn/10"
+                    onClick={() => draftHold({ kind: 'SERIAL', serials: [serial] })}
+                    title="이 시리얼로 Hold 만들기 칸을 채웁니다"
+                  >
+                    Hold
+                  </button>
+                  <button className="rounded border border-line px-2 py-0.5 text-xs text-sub hover:bg-white/10 hover:text-ink" onClick={() => openTrace(serial)}>
+                    창으로 보기
+                  </button>
+                </div>
               )
             }
             stale={trace.isFetching && trace.isPlaceholderData}
@@ -440,12 +468,14 @@ export default function TracePage() {
         </ChartCard>
       </div>
 
-      <LotDetail lot={lot} q={detail} />
+      <LotDetail lot={lot} q={detail} onHold={(l) => draftHold({ kind: 'LOT', material: LOT_RE.exec(l)?.[1] ?? material ?? undefined, lot: l })} />
+
+      <HoldSection ref={holdBox} line={line} draft={holdDraft} />
     </PageShell>
   );
 }
 
-function LotDetail({ lot, q }: { lot: string | null; q: UseQueryResult<LotTrace> }) {
+function LotDetail({ lot, q, onHold }: { lot: string | null; q: UseQueryResult<LotTrace>; onHold: (lot: string) => void }) {
   const openTrace = useLive((s) => s.openTrace);
   const [filter, setFilter] = useState<'ALL' | 'DONE' | 'NG' | 'WIP'>('ALL');
   const [more, setMore] = useState(false);
@@ -472,18 +502,23 @@ function LotDetail({ lot, q }: { lot: string | null; q: UseQueryResult<LotTrace>
       legend={TOP_STATUS.filter((s) => groups[s.key] > 0).map((s) => ({ label: s.label, color: s.color, shape: 'rect' as const }))}
       right={
         d && (
+          <div className="flex gap-1.5">
+          <button className="rounded border border-warn/40 px-2 py-0.5 text-xs text-warn hover:bg-warn/10" onClick={() => onHold(lot)} title="이 LOT로 Hold 만들기 칸을 채웁니다">
+            이 LOT Hold
+          </button>
           <button
             className="rounded border border-line px-2 py-0.5 text-xs text-sub hover:bg-white/10 hover:text-ink"
             onClick={() =>
               downloadCsv(
                 `${lot}-영향제품.csv`,
                 head,
-                list.map((f) => [f.serial, (f.item && ITEM_NAMES[f.item]) ?? f.item ?? '', f.line ?? '', f.status ? (UNIT_STATUS[f.status] ?? f.status) : '', f.parts, f.lastAt ?? '']),
+                list.map((f) => [f.serial, (f.item && ITEM_NAMES[f.item]) ?? f.item ?? '', f.line ?? '', unitStatusName(f.status), f.parts, f.lastAt ?? '']),
               )
             }
           >
             CSV 내려받기
           </button>
+          </div>
         )
       }
       stale={q.isFetching && q.isPlaceholderData}
@@ -534,7 +569,7 @@ function LotDetail({ lot, q }: { lot: string | null; q: UseQueryResult<LotTrace>
                     {(f.item && ITEM_NAMES[f.item]) ?? f.item ?? '-'}
                   </span>,
                   f.line ?? '-',
-                  <StatusBadge key="st" status={f.status} defect={f.defect} />,
+                  <UnitStatusBadge key="st" status={f.status} defect={f.defect} />,
                   f.parts,
                   kst(f.lastAt, true),
                 ])}

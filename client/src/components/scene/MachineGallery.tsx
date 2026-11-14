@@ -6,7 +6,7 @@
 //   ?view=iso|front|back|top|side 카메라 방향 (기본 iso)
 //   ?state=RUN|IDLE|DOWN|SETUP|STOP|BLOCKED   상태 (기본 RUN, 움직이는 부분이 돈다)
 //   ?tags=0                       부위 이름표 숨기기
-// 이름표 옆 숫자는 메시 수(인스턴스는 한 개로 셈)다. 공장 전체에 38대가 있으므로 가볍게 유지한다.
+// 이름표 옆 숫자는 메시 수(인스턴스는 한 개로 셈)다. 공장 전체에 40대가 있으므로 가볍게 유지한다.
 import { OrbitControls } from '@react-three/drei';
 import { Canvas, useThree } from '@react-three/fiber';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';

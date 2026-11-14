@@ -23,7 +23,7 @@ export default function OperatorPicker() {
         <header className="flex flex-wrap items-center gap-3">
           <div className="min-w-0 flex-1">
             <h1 className="text-2xl font-semibold">작업자 태블릿</h1>
-            <p className="mt-1 text-sm text-sub">이 태블릿이 놓인 설비를 고르세요. 설비 상태, 비가동 사유 입력, 작업 전 점검, 작업표준서, 음성 질문을 한 화면에서 합니다.</p>
+            <p className="mt-1 text-sm text-sub">이 태블릿이 놓인 설비를 고르세요. 설비 상태, 비가동 사유 입력, 작업 전 점검, 초물 상태·4M 변경점 신고, 작업표준서, 음성 질문을 한 화면에서 합니다.</p>
           </div>
           <span className="num text-xl font-semibold">{kst(simT)}</span>
           <Link href="/" className="flex h-12 items-center rounded-lg border border-line bg-white/5 px-4 text-base hover:bg-white/10">

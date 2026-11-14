@@ -20,6 +20,7 @@ import {
 } from '@lumitwin/shared';
 import { C, ChartCard, DataTable, Empty, Key, Tip, TipRow, TipTitle, useWidth } from '@/components/charts/kit';
 import { Meter } from '@/components/charts/small';
+import { HealthPanel } from '@/components/insights/HealthPanel';
 import { PageShell, Stat } from '@/components/mes/PageShell';
 import { api } from '@/lib/api';
 import { cx, duration, kst, pct } from '@/lib/format';
@@ -103,7 +104,7 @@ export default function MaintenancePage() {
       title="설비 보전"
       desc={
         <>
-          설비가 언제, 왜, 얼마나 멈췄는지(고장 이력)와 MTBF·MTTR을 공장 정의의 설계값과 비교하고, 가동 시간 기준 계획 보전(PM)이 밀린 설비를 찾습니다. 값은 MES에 쌓인 상태 기록에서
+          설비가 언제, 왜, 얼마나 멈췄는지(고장 이력)와 MTBF·MTTR을 공장 정의의 설계값과 비교하고, 가동 시간 기준 계획 보전(PM)이 밀린 설비와 진동이 오르는 설비(예지 보전)를 찾습니다. 값은 MES에 쌓인 상태 기록에서
           계산해 서버를 다시 띄워도 같습니다. 계획 보전은 작업자 태블릿에서 계획 정지 사유를 <span className="text-ink">{PM_REASON}</span>으로 세웠다가 다시 돌리면 기록됩니다.
         </>
       }
@@ -128,6 +129,8 @@ export default function MaintenancePage() {
           sub={data ? `임박 ${totals.pmSoon}대 · 가동 시간 기준 주기` : undefined}
         />
       </div>
+
+      <HealthPanel className="mt-3" inScope={inScope} onPick={goStation} />
 
       <TimelineCard className="mt-3" data={data} inScope={inScope} onPick={goStation} stale={q.isFetching && q.isPlaceholderData} empty={loading} />
 
@@ -213,6 +216,10 @@ export default function MaintenancePage() {
           </li>
           <li>
             <span className="text-ink">작업 전 점검</span>(자주보전)은 작업자 태블릿 기록입니다. 이번 실행에서 안 했으면 비어 있습니다.
+          </li>
+          <li>
+            <span className="text-ink">예지 보전</span>은 시간이 아니라 상태로 보전 시점을 정합니다. 진동 RMS(mm/s)를 ISO 10816 기계 등급별 구역 경계와 견줘 B/C(장기 운전 한계)를 넘으면 보전 계획, C/D(손상
+            우려)를 넘으면 즉시 보전 알람을 냅니다. 남은 수명은 진동 추세를 직선으로 늘린 추정이라, 마모가 빨라지는(진동이 가속하는) 끝 무렵에는 실제보다 길게 나옵니다.
           </li>
         </ul>
       </section>

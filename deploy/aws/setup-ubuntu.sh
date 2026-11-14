@@ -147,6 +147,11 @@ if grep -q '^CONTROL_KEY=CHANGE_ME' server/.env; then
   set_env CONTROL_KEY "$(openssl rand -hex 8)"
   echo "제어 키를 만들어 server/.env의 CONTROL_KEY에 넣었습니다"
 fi
+# 로그인 쿠키 서명 키. 처음 한 번만 만든다 (예전 server/.env처럼 줄이 없을 때도)
+if grep -q '^AUTH_SECRET=CHANGE_ME' server/.env || ! grep -q '^AUTH_SECRET=' server/.env; then
+  set_env AUTH_SECRET "$(openssl rand -hex 32)"
+  echo "로그인 쿠키 서명 키를 만들어 server/.env의 AUTH_SECRET에 넣었습니다"
+fi
 if [ "${WHISPER:-}" = "1" ]; then
   set_env WHISPER 1  # ecosystem.config.cjs가 읽어 받아쓰기 서버를 띄운다 (다음에 WHISPER=1 없이 돌려도 그대로)
   if ! grep -q '^STT_BASE_URL=' server/.env; then
