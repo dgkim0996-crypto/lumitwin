@@ -1,10 +1,37 @@
 'use client';
 
-import { FACTORY, LINES, type AmrState } from '@lumitwin/shared';
+import { FACTORY, LINES, STATIONS, type AmrState, type StationDef } from '@lumitwin/shared';
 import { STATE_COLOR, STATE_LABEL } from '@/lib/format';
 import { useLive } from '@/lib/live';
-import { FOOTPRINT } from './machines';
+import { guideFor } from '@/lib/station-guide';
+import { calloutsFor, FOOTPRINT } from './machines';
 import { labelRef } from './labels';
+
+/** 설비 원점 기준 좌표 → 월드 좌표 (Station3D와 같은 회전·위치) */
+export function stationToWorld(def: StationDef, [x, y, z]: [number, number, number]): [number, number, number] {
+  const a = ((def.rot ?? 0) * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return [def.pos[0] + x * c + z * s, y, def.pos[1] - x * s + z * c];
+}
+
+/** 고른 설비의 부위 이름표: 무엇이 어디서 무슨 일을 하는지 3D 위에 짚어 준다 */
+export function PartTags({ def }: { def: StationDef }) {
+  return (
+    <>
+      {calloutsFor(def).map((c, i) => {
+        const [x, y, z] = stationToWorld(def, c.at);
+        return (
+          <div key={`${def.code}:${i}`} ref={labelRef(`part:${def.code}:${i}`, x, y, z)} className={base}>
+            <div className="part-tag" title={c.note}>
+              {c.text}
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
 
 const AMR_LABEL: Record<AmrState, string> = {
   IDLE: '대기',
@@ -46,17 +73,21 @@ export function SceneLabels() {
           const isSel = selected === def.code;
           const show = isSel || hovered === def.code || state === 'DOWN';
           const H = FOOTPRINT[def.kind][2];
+          // 고른 설비는 부위 이름표가 함께 뜨므로, 가장 높은 부위 이름표보다 위로 올려 겹치지 않게 한다
+          const top = isSel ? Math.max(H + 0.3, ...calloutsFor(def).map((c) => c.at[1] + 0.6)) : H;
           return (
-            <div key={def.code} ref={labelRef(`st:${def.code}`, def.pos[0], H + 1.1, def.pos[1])} className={base} style={{ display: show ? 'block' : 'none' }}>
-              <div className="station-tag" style={{ borderColor: isSel ? l.color : undefined }}>
+            <div key={def.code} ref={labelRef(`st:${def.code}`, def.pos[0], top + 1.1, def.pos[1])} className={base} style={{ display: show ? 'block' : 'none' }}>
+              <div className="station-tag" style={{ borderColor: isSel ? l.color : undefined, transform: isSel ? 'translateY(-14px)' : undefined }}>
                 <span className="dot" style={{ background: STATE_COLOR[state] }} />
                 <b>{def.code}</b>
                 <span className="muted">{state === 'DOWN' ? `${STATE_LABEL.DOWN}${st?.reason ? ` · ${st.reason}` : ''}` : def.name}</span>
+                {state !== 'DOWN' && guideFor(def).tag && <span style={{ color: l.color }}>{guideFor(def).tag}</span>}
               </div>
             </div>
           );
         }),
       )}
+      {selected && STATIONS[selected] && <PartTags def={STATIONS[selected]} />}
       {FACTORY.amrs.map((a) => {
         const m = amrs[a.code];
         return (

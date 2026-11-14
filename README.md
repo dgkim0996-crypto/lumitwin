@@ -187,7 +187,7 @@ SIM_LINK=opcua bash deploy/aws/setup-ubuntu.sh 이름.duckdns.org
 | [`shared/`](shared) | TypeScript, tsup | 공장 정의(라인·설비·태그·불량 인과·시나리오)의 단일 원본. 빌드할 때 `factory.json`도 내보내 Python이 같은 정의를 읽는다 |
 | [`sim/`](sim) | Python, SimPy, paho-mqtt, asyncua(선택) | 가상 공장·PLC. 설비 상태 기계, 버퍼, 배치·터널 설비, MTBF/MTTR 고장, 품질 인과, 재가동 초품, AMR. 선택: OPC UA 서버(`opcua_plc.py`)와 엣지 게이트웨이(`edge.py`) |
 | [`server/`](server) | NestJS 12, Prisma 7, PostgreSQL, aedes, Socket.io | MQTT 수집, 실시간 OEE·SPC·알람, 일괄 기록, 추적 API, 시뮬레이터 제어 |
-| [`client/`](client) | Next.js 16, React 19, React Three Fiber, Tailwind 4, TanStack Query, zustand | 3D 공장(설비 24종 절차적 모델링), HUD, 상세 패널, 계보 창, MES 화면 5개(차트는 라이브러리 없이 SVG로 직접 그림), AI 비서 패널 |
+| [`client/`](client) | Next.js 16, React 19, React Three Fiber, Tailwind 4, TanStack Query, zustand | 3D 공장(설비 24종을 공정군별 파일로 절차적 모델링, 부위 이름표, 개발용 미리보기 `/dev/machines`), HUD, 상세 패널(설비마다 하는 일·앞뒤 공정 안내), 계보 창, MES 화면 5개(차트는 라이브러리 없이 SVG로 직접 그림), AI 비서 패널 |
 | [`tools/whisper/`](tools/whisper) | Python, faster-whisper | 선택: OpenAI 호환 로컬 음성 받아쓰기 서버 |
 | [`deploy/cloudflare/`](deploy/cloudflare) | cloudflared | 무료 공개 링크: 이 PC를 Cloudflare Tunnel로 공개하는 방법(`scripts/tunnel.mjs`)과 보기 전용 설정 |
 | [`deploy/aws/`](deploy/aws) | bash, pm2, Caddy | 상시 서버 한 대 배포: 설치·갱신 스크립트, pm2 프로세스 정의, Caddyfile, 운영용 `.env` 예시 |

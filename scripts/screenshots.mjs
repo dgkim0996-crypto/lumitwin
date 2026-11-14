@@ -3,6 +3,8 @@
 //   node scripts/screenshots.mjs                 모든 화면
 //   node scripts/screenshots.mjs losses spc      고른 화면만
 // 결과: docs/images/<이름>.png · 브라우저 경로는 BROWSER 환경 변수로 바꿀 수 있다
+//   아무 주소나 한 장 (모델 확인용, docs/images에 넣지 않음):
+//   node scripts/screenshots.mjs --url "/dev/machines?group=smt" --out C:/tmp/smt.png [--wait 6000] [--size 1600x1000]
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -177,19 +179,34 @@ async function shoot(cdp, s) {
     clip = { x: Math.max(0, r.x + r.w - s.clip.fromRight), y: r.y, width: s.clip.fromRight, height: r.bottom - r.y + 12, scale: 1 };
   }
   const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', ...(clip && { clip }) });
-  const file = join(OUT, `${s.name}.png`);
+  const file = s.out ?? join(OUT, `${s.name}.png`);
   writeFileSync(file, Buffer.from(data, 'base64'));
-  console.log(`[shot] ${s.name}.png ${clip ? `${clip.width}×${Math.round(clip.height)}` : `${width}×${height}`}`);
+  console.log(`[shot] ${s.out ?? `${s.name}.png`} ${clip ? `${clip.width}×${Math.round(clip.height)}` : `${width}×${height}`}`);
+}
+
+/** --url 모드: 인자에서 한 장짜리 촬영 정의를 만든다 */
+function adhoc(argv) {
+  const get = (k) => {
+    const i = argv.indexOf(k);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  const url = get('--url');
+  if (!url) return null;
+  const out = get('--out');
+  if (!out) throw new Error('--out <파일.png> 가 필요합니다');
+  const size = get('--size')?.split('x').map(Number);
+  return [{ name: out, url: url.startsWith('/') ? url : `/${url}`, out, wait: Number(get('--wait') ?? 6000), ...(size?.length === 2 && { size }) }];
 }
 
 async function main() {
-  const only = process.argv.slice(2);
-  const shots = only.length ? SHOTS.filter((s) => only.includes(s.name)) : SHOTS;
+  const argv = process.argv.slice(2);
+  const custom = adhoc(argv);
+  const shots = custom ?? (argv.length ? SHOTS.filter((s) => argv.includes(s.name)) : SHOTS);
   if (!shots.length) throw new Error(`화면 이름: ${SHOTS.map((s) => s.name).join(', ')}`);
   await waitJson(`${BASE.replace(/\/$/, '')}/api/v1/access`, 5).catch(() => {
     throw new Error(`${BASE} 에 화면이 떠 있지 않습니다 (npm run dev 먼저)`);
   });
-  mkdirSync(OUT, { recursive: true });
+  if (!custom) mkdirSync(OUT, { recursive: true });
   const profile = mkdtempSync(join(tmpdir(), 'lumitwin-shot-'));
   const browser = spawn(
     findBrowser(),

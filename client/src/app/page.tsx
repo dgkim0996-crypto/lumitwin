@@ -1,7 +1,8 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { FACTORY } from '@lumitwin/shared';
+import { useEffect } from 'react';
+import { FACTORY, STATIONS } from '@lumitwin/shared';
 import { AlarmFeed } from '@/components/hud/AlarmFeed';
 import { LinePanel } from '@/components/hud/LinePanel';
 import { StationPanel } from '@/components/hud/StationPanel';
@@ -31,6 +32,11 @@ function Waiting() {
 export default function Home() {
   // AI 비서 패널이 열리면 설비 상세 패널이 그 왼쪽으로 비켜 선다 (비서 답의 설비 링크를 눌러도 상세가 보이게)
   const assistant = useUi((s) => s.assistantOpen);
+  // 링크로 설비 열기: /?select=HL-IM-L1 (설명·화면 캡처용)
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get('select');
+    if (code && STATIONS[code]) useLive.getState().select(code);
+  }, []);
   return (
     <main className="relative h-screen w-screen overflow-hidden">
       <div className="absolute inset-0">

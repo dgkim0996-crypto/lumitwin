@@ -52,7 +52,7 @@ export const Station3D = memo(function Station3D({ def, color }: Props) {
 
   return (
     <group position={[def.pos[0], 0, def.pos[1]]} rotation={[0, ((def.rot ?? 0) * Math.PI) / 180, 0]} onClick={onClick} onPointerOver={onOver} onPointerOut={onOut}>
-      <Machine kind={def.kind} color={color} state={state} />
+      <Machine def={def} color={color} state={state} running={state === 'RUN'} />
       <StackLight state={state} pos={[L / 2 - 0.15, Math.max(H - 0.2, 1.2), -D / 2 + 0.15]} />
       {/* 클릭 판정을 넉넉하게: 보이지 않는 상자 */}
       <mesh position={[0, H / 2, 0]} visible={false}>
