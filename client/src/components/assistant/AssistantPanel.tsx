@@ -11,6 +11,7 @@ import { useLive } from '@/lib/live';
 import { useUi } from '@/lib/ui';
 import { useVoiceInput } from '@/lib/voice';
 import { Markdown } from './Markdown';
+import { ModeBadge } from './ModeBadge';
 
 const PAGE_LABEL: Record<string, string> = {
   '/': '3D 공장',
@@ -28,6 +29,7 @@ const PAGE_LABEL: Record<string, string> = {
   '/maintenance': '설비 보전·예지 보전',
   '/losses': '로스 분석',
   '/audit': '감사 기록',
+  '/tbm': 'TBM 점검',
 };
 
 /** 작업자 태블릿(/operator/설비코드)은 주소의 설비가 "이 설비"다 */
@@ -82,7 +84,7 @@ function AssistantBubble({ m, last }: { m: ChatMessage; last: boolean }) {
       {m.status === 'stopped' && <div className="text-xs text-dim">답을 멈췄습니다.</div>}
       {m.status === 'done' && last && (
         <div className="num text-[10.5px] text-dim">
-          {m.mode === 'mock' ? '모의 모드' : m.model}
+          {m.mode === 'mock' ? '모의 모드' : m.mode === 'local' ? `로컬 LLM · ${m.model ?? '서버 첫 모델'}` : m.model}
           {m.tools.length ? ` · 조회 ${m.tools.length}회` : ''}
           {m.ms != null ? ` · ${(m.ms / 1000).toFixed(1)}초` : ''}
           {m.usage ? ` · 토큰 입력 ${m.usage.input.toLocaleString()}(캐시 ${m.usage.cacheRead.toLocaleString()}) / 출력 ${m.usage.output.toLocaleString()}` : ''}
@@ -194,14 +196,7 @@ export function AssistantPanel() {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="font-semibold">AI 현장 비서</span>
-            {mode && (
-              <span
-                className={cx('rounded px-1.5 py-px text-[10.5px]', mode === 'claude' ? 'bg-info/20 text-info' : 'bg-white/10 text-sub')}
-                title={mode === 'claude' ? `Claude API (${info?.model})` : 'API 키 없이 규칙으로 질문을 해석하고, 같은 도구로 실제 공장 데이터를 조회합니다'}
-              >
-                {mode === 'claude' ? 'Claude' : '모의 모드'}
-              </span>
-            )}
+            {mode && info && <ModeBadge mode={mode} model={info.model} endpoint={info.endpoint} />}
           </div>
           <div className="truncate text-[11px] text-dim">
             공장 데이터·작업표준서로 답합니다 · 보고 있는 화면: {pageLabel(path)}
@@ -234,7 +229,12 @@ export function AssistantPanel() {
             </div>
             {mode === 'mock' && (
               <p className="text-[11px] leading-relaxed text-dim">
-                지금은 모의 모드입니다: 질문을 규칙으로 해석해 정해진 틀로 답합니다. 서버에 ANTHROPIC_API_KEY를 넣으면 Claude가 같은 도구로 자유로운 질문에 답합니다.
+                지금은 모의 모드입니다: 질문을 규칙으로 해석해 정해진 틀로 답합니다. 서버에 ANTHROPIC_API_KEY를 넣으면 Claude가, ASSISTANT_PROVIDER=local로 사내 오픈소스 LLM(LM Studio·Ollama)을 가리키면 그 모델이 같은 도구로 자유로운 질문에 답합니다.
+              </p>
+            )}
+            {mode === 'local' && (
+              <p className="text-[11px] leading-relaxed text-dim">
+                사내 서버의 오픈소스 LLM({info?.model ?? '서버 첫 모델'} · {info?.endpoint})이 답합니다. 질문과 조회한 공장 데이터가 외부 API로 나가지 않습니다. 작은 모델은 Claude보다 도구를 잘못 고를 수 있습니다.
               </p>
             )}
           </div>

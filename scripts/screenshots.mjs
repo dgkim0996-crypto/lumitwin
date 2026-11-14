@@ -44,6 +44,8 @@ const SHOTS = [
   { name: 'reports', url: '/reports', wait: 6000 },
   { name: 'energy', url: '/energy', wait: 6000 },
   { name: 'audit', url: '/audit', wait: 5000, as: 'admin' },
+  // P10 TBM 대조: 올린 회의가 있어야 한다 (e2e의 tbm 묶음을 먼저 돌리거나 화면에서 예시 대화록을 올린 뒤). 근거 줄 하나를 눌러 전사에 강조한 상태로 찍는다
+  { name: 'tbm', url: '/tbm', wait: 6000, actions: [`document.querySelector('[data-testid=tbm-item][data-status=PARTIAL] button.num, [data-testid=tbm-item] button.num')?.click()`], wait2: 1200 },
 ];
 
 const DEFAULT_AS = 'lead1';

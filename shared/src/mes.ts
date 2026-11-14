@@ -33,6 +33,8 @@ export type PermCode =
   | 'change.register' // 4M 변경점 신고
   | 'change.approve' // 변경점 승인·초물 판정 확인
   | 'alarm.ack' // 알람 확인
+  | 'tbm.record' // TBM 회의 녹음·대화록 올리기 (체크리스트 대조)
+  | 'tbm.confirm' // TBM에서 빠진 항목 확인·보완 체크
   | 'audit.read'; // 감사 기록 조회
 
 export const PERMISSIONS: Record<PermCode, Role[]> = {
@@ -47,6 +49,9 @@ export const PERMISSIONS: Record<PermCode, Role[]> = {
   'change.register': ['operator', 'leader', 'quality', 'maintenance', 'admin'],
   'change.approve': ['quality', 'admin'],
   'alarm.ack': ['operator', 'leader', 'quality', 'maintenance', 'admin'],
+  // TBM은 조장이 진행하고 작업자가 대신 녹음을 올리기도 한다. 빠진 항목의 보완 확인은 진행 책임자인 조장 몫 (assumed)
+  'tbm.record': ['operator', 'leader', 'admin'],
+  'tbm.confirm': ['leader', 'admin'],
   'audit.read': ['admin'],
 };
 
@@ -62,6 +67,8 @@ export const PERM_NAMES: Record<PermCode, string> = {
   'change.register': '변경점 신고',
   'change.approve': '변경점 승인',
   'alarm.ack': '알람 확인',
+  'tbm.record': 'TBM 기록 올리기',
+  'tbm.confirm': 'TBM 보완 확인',
   'audit.read': '감사 기록 조회',
 };
 

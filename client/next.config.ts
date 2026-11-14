@@ -16,6 +16,11 @@ const nextConfig: NextConfig = {
   // socket.io 주소(/socket.io/?EIO=…)가 끝의 '/'를 떼는 리다이렉트를 당하면 실시간 연결이 붙지 않는다
   skipTrailingSlashRedirect: true,
   transpilePackages: ['three'],
+  experimental: {
+    // Next는 /api/v1로 넘겨주는(rewrites) 요청 본문을 기본 10MB에서 자른다. 잘리면 MES가 나머지를 기다리다 30초 뒤 500이 난다.
+    // TBM 녹음은 25MB까지 올리므로(받아쓰기 서버 한도) multipart 머리까지 넉넉히 26MB로 둔다. 그보다 크면 MES가 413으로 거절한다
+    proxyClientMaxBodySize: 26 * 1024 * 1024,
+  },
   async rewrites() {
     return [
       { source: '/api/v1/:path*', destination: `${apiBaseUrl.href}/:path*` },

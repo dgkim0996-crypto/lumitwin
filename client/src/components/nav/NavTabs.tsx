@@ -44,7 +44,13 @@ export const NAV: (NavLink | NavGroup)[] = [
   },
   { href: '/trace', label: '추적·Hold', hint: '시리얼 계보 · LOT 품질 · Hold(격리)' },
   { href: '/maintenance', label: '보전', hint: '고장 이력 · MTBF·MTTR · 계획 보전 · 예지 보전' },
-  { href: '/operator', label: '작업자', hint: '작업자 태블릿 · 비가동 사유 · 작업 전 점검 · 변경점 신고' },
+  {
+    label: '작업자',
+    items: [
+      { href: '/operator', label: '작업자 태블릿', hint: '비가동 사유 · 작업 전 점검 · 변경점 신고' },
+      { href: '/tbm', label: 'TBM 점검', hint: '작업 전 안전 회의 녹음·대화록을 원청·안전팀·MES 항목과 대조' },
+    ],
+  },
 ];
 
 const isGroup = (n: NavLink | NavGroup): n is NavGroup => 'items' in n;

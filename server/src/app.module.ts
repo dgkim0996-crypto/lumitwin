@@ -13,6 +13,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ProductionModule } from './production/production.module';
 import { QualitySystemModule } from './quality-system/quality-system.module';
 import { SimController } from './sim-control/sim.controller';
+import { TbmModule } from './tbm/tbm.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { SimController } from './sim-control/sim.controller';
     QualitySystemModule,
     ExecutionModule,
     InsightsModule,
+    TbmModule,
     AssistantModule,
   ],
   controllers: [FactoryController, SimController, AccessController],

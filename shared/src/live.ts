@@ -369,8 +369,9 @@ export interface AlarmLive {
    * CHECK = 작업자가 태블릿의 작업 전 점검에서 이상을 표시함
    * P9: INTERLOCK = 투입 거부 · NCR = 불량 처리 판정 대기(MRB) · HOLD = 격리 · FA = 초·중·종물 불합격(수동 초물 판정 포함) · PDM = 예지 보전 경고
    *     CHANGE = 4M 변경점 · WO = 작업지시 (계획 없음·완료)
+   * TBM = TBM 회의 대조에서 안 다룬(또는 근거가 불확실한) 체크리스트 항목이 있음
    */
-  kind: 'DOWN' | 'SPC' | 'LIMIT' | 'QUALITY' | 'SCENARIO' | 'CHECK' | 'INTERLOCK' | 'NCR' | 'HOLD' | 'FA' | 'PDM' | 'CHANGE' | 'WO';
+  kind: 'DOWN' | 'SPC' | 'LIMIT' | 'QUALITY' | 'SCENARIO' | 'CHECK' | 'INTERLOCK' | 'NCR' | 'HOLD' | 'FA' | 'PDM' | 'CHANGE' | 'WO' | 'TBM';
   title: string;
   detail?: string;
   acked: boolean;

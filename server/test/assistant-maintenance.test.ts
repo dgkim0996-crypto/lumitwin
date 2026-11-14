@@ -45,7 +45,7 @@ async function ask(provider: MockProvider, message: string): Promise<string> {
   const emit = (e: AssistantEvent) => {
     if (e.type === 'text') text += e.delta;
   };
-  const conv = { id: 't', createdAt: 0, updatedAt: 0, busy: false, messages: [], memo: {} };
+  const conv = { id: 't', createdAt: 0, updatedAt: 0, busy: false, messages: [], oai: [], memo: {} };
   // 다른 도구는 실패를 돌려주므로 그쪽 답 틀이 깨질 수 있다. 여기서는 어느 도구로 갔는지만 본다
   await provider.run({ conv, message, context: {}, emit, signal: new AbortController().signal }).catch(() => undefined);
   return text;

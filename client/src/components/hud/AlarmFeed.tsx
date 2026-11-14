@@ -27,6 +27,7 @@ const KIND: Record<AlarmLive['kind'], string> = {
   PDM: '예지 보전',
   CHANGE: '변경점',
   WO: '작업지시',
+  TBM: 'TBM',
 };
 
 type Filter = 'all' | 'open' | 'quality';

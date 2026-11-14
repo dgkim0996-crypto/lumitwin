@@ -48,6 +48,7 @@ import { HealthService } from '../insights/health.service';
 import { ReportsService } from '../insights/reports.service';
 import { LiveService } from '../live/live.service';
 import { QualitySystemService } from '../quality-system/quality-system.service';
+import { TbmService } from '../tbm/tbm.service';
 import {
   LINE_PROP,
   STATE_NAMES,
@@ -102,6 +103,7 @@ const CP_PAGE = pageRef('/control-plan', '관리계획서');
 const REPORTS_PAGE = pageRef('/reports', '교대 일보');
 const ENERGY_PAGE = pageRef('/energy', '에너지');
 const MAINT_PAGE = pageRef('/maintenance', '설비 보전');
+const TBM_PAGE = pageRef('/tbm', 'TBM 점검');
 
 /** 관리계획서는 공장 정의로 만들고 바뀌지 않으므로 한 번만 만든다 */
 let cpCache: ControlPlan | null = null;
@@ -210,6 +212,17 @@ export const MES_TOOL_DEFS = [
       '남은 수명 추정(경고·위험 경계까지 가상 시간, 진동 추세 직선 외삽), 마지막 보전. "이 설비 진동 괜찮아?"에 쓴다. 설비 하나나 라인으로 거를 수 있다. 고장 이력·MTBF·계획 보전 주기는 maintenance 도구.',
     input_schema: { type: 'object', properties: { station: STATION_PROP, line: LINE_PROP }, additionalProperties: false },
   },
+  {
+    name: 'tbm_status',
+    description:
+      'TBM(작업 전 안전 회의) 체크리스트 대조 결과: 라인별 가장 최근 회의(또는 고른 회의)의 교대·올린 사람·판정 방식(Claude·로컬 LLM·모의 규칙), 다룸·부분·안 다룸·불확실 수, ' +
+      '다루지 않은 항목(원청·안전팀 고정 항목, 그날 MES 상태에서 만든 고장 설비·Hold·초물 대기·예지 보전 항목)과 조장의 보완·확인 여부. "오늘 TBM에서 빠진 거 있어?"에 쓴다. 라인으로 거를 수 있다.',
+    input_schema: {
+      type: 'object',
+      properties: { line: LINE_PROP, meeting_id: { type: 'integer', minimum: 1, description: 'TBM 회의 번호 (없으면 라인별 가장 최근 회의)' } },
+      additionalProperties: false,
+    },
+  },
 ];
 
 const MES_TOOL_NAMES = new Set(MES_TOOL_DEFS.map((t) => t.name));
@@ -227,6 +240,7 @@ export function mesToolLabel(name: string, input: Input): string | null {
     case 'shift_report': return `교대 일보 조회${arg('key')}${arg('which')}${arg('day')}${arg('shift')}${arg('line')}`;
     case 'energy_report': return `에너지 조회${arg('line')}${input.current_shift === true ? ' · 이번 교대' : ''}${typeof input.hours === 'number' ? ` · ${input.hours}시간` : ''}`;
     case 'equipment_health': return `예지 보전 조회${arg('station')}${arg('line')}`;
+    case 'tbm_status': return `TBM 대조 조회${arg('line')}${typeof input.meeting_id === 'number' ? ` · #${input.meeting_id}` : ''}`;
     default: return null;
   }
 }
@@ -243,6 +257,8 @@ export class MesTools {
     private readonly reports: ReportsService,
     private readonly energy: EnergyService,
     private readonly health: HealthService,
+    /** 없으면(시험) tbm_status가 실패를 돌려준다 */
+    private readonly tbm?: TbmService,
   ) {}
 
   static has(name: string): boolean {
@@ -260,6 +276,7 @@ export class MesTools {
       case 'shift_report': return await this.shiftReport(input);
       case 'energy_report': return await this.energyReport(input);
       case 'equipment_health': return this.equipmentHealth(input);
+      case 'tbm_status': return await this.tbmStatus(input);
       default: return fail(`알 수 없는 도구 ${name}`);
     }
   }
@@ -834,6 +851,35 @@ export class MesTools {
         ? `${one.station} · ${one.level ? HEALTH_LEVEL_NAMES[one.level] : '자료 없음'} · 진동 ${one.vib ?? '−'} mm/s`
         : `감시 ${list.length}대 · 위험 ${list.filter((s) => s.level === 'danger').length} · 경고 ${list.filter((s) => s.level === 'warn').length}`,
       refs: [...new Set([...(st.v ? [st.v] : []), ...bad.slice(0, 4).map((s) => s.station)])].map(stationRef).concat(MAINT_PAGE),
+    };
+  }
+
+  // ───────────── TBM 회의 대조 ─────────────
+
+  async tbmStatus(input: Input): Promise<ToolOutcome> {
+    if (!this.tbm) return fail('TBM 대조 기능을 쓸 수 없습니다');
+    const line = lineArg(input);
+    if (!line.ok) return fail(line.error);
+    const id = typeof input.meeting_id === 'number' && Number.isInteger(input.meeting_id) ? input.meeting_id : undefined;
+    let out: Awaited<ReturnType<TbmService['assistantStatus']>>;
+    try {
+      out = await this.tbm.assistantStatus({ line: line.v, meetingId: id });
+    } catch (e) {
+      return fail((e as Error).message);
+    }
+    const found = out.meetings.filter((m) => m.meeting);
+    const open = found.reduce((n, m) => n + (m.meeting?.open ?? 0), 0);
+    const data = {
+      ...out,
+      note:
+        '판정은 회의 전사를 체크리스트와 대조한 것이다. 불확실은 판정기가 다뤘다고 했지만 서버 검증기가 근거 줄을 확인하지 못해 내린 것이라 사람이 확인해야 한다. ' +
+        '빠진 항목의 보완 전달·확인 체크는 /tbm 화면에서 조장(TBM 보완 확인 권한)이 하고 감사 기록이 남는다. 회의 올리기는 작업자·조장(TBM 기록 올리기 권한).',
+    };
+    return {
+      ok: true,
+      data,
+      summary: found.length ? `TBM 회의 ${found.length}건 · 확인 필요 ${open}항목` : '올린 TBM 회의 없음',
+      refs: [TBM_PAGE],
     };
   }
 }

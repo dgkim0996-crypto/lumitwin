@@ -41,7 +41,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     // 로그인 쿠키(httpOnly)는 같은 주소로만 실린다
     credentials: 'same-origin',
-    headers: { 'content-type': 'application/json', ...(key ? { [CONTROL_KEY_HEADER]: key } : {}), ...(init?.headers ?? {}) },
+    // 파일 올리기(FormData)는 브라우저가 multipart 경계를 붙이도록 content-type을 비워 둔다
+    headers: { ...(init?.body instanceof FormData ? {} : { 'content-type': 'application/json' }), ...(key ? { [CONTROL_KEY_HEADER]: key } : {}), ...(init?.headers ?? {}) },
   });
   const text = await res.text();
   let body: { message?: unknown } | null = null;
@@ -70,6 +71,8 @@ export const api = {
   post: <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body: body == null ? undefined : JSON.stringify(body) }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body: body == null ? undefined : JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+  /** multipart 올리기 (파일 + 글 필드) */
+  upload: <T>(path: string, form: FormData) => request<T>(path, { method: 'POST', body: form }),
 };
 
 type Without<T, K extends keyof T> = Omit<T, K>;
