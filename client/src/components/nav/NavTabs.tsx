@@ -27,6 +27,7 @@ export const NAV: (NavLink | NavGroup)[] = [
     items: [
       { href: '/production', label: '생산 현황', hint: 'OEE · 시간대별 생산 · 설비 가동' },
       { href: '/orders', label: '작업지시·계획', hint: '라인별 작업지시 순서 · 기종 · 진척 · 기종 변경' },
+      { href: '/whatif', label: 'What-if', hint: '지금 공장 상태로 계획 몇 개를 여러 번 돌려 생산량·납기·OEE·에너지 비교' },
       { href: '/losses', label: '6대 로스', hint: '계획 시간이 어디로 새는지 · 개선 우선순위' },
       { href: '/energy', label: '에너지', hint: '설비·라인 전력량 · 개당 에너지 · 대기 전력' },
       { href: '/reports', label: '교대 일보', hint: '교대별 생산·품질·설비 요약 · CSV · 인쇄' },

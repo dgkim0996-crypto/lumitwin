@@ -1,0 +1,160 @@
+{
+  "at": "2026-11-16T03:00:39.197Z",
+  "summary": {
+    "hours": 2,
+    "reps": 10,
+    "speed": 60,
+    "trials": 4,
+    "cases": 12,
+    "inBand": 8,
+    "inBandPct": 66.7,
+    "meanAbsErrPct": 12.7,
+    "meanErrPct": -0.6
+  },
+  "trials": [
+    {
+      "id": 40,
+      "vStartAt": "2026-11-16T03:44:03.500Z",
+      "overshootMin": 0,
+      "computeMs": 5807,
+      "elapsedMs": 2739,
+      "rows": [
+        {
+          "line": "HL",
+          "actual": 87,
+          "mean": 81.8,
+          "p10": 72.6,
+          "p90": 92.1,
+          "inBand": true,
+          "errPct": 6.4
+        },
+        {
+          "line": "EM",
+          "actual": 141,
+          "mean": 138,
+          "p10": 119.6,
+          "p90": 150.1,
+          "inBand": true,
+          "errPct": 2.2
+        },
+        {
+          "line": "OSM",
+          "actual": 72,
+          "mean": 96.5,
+          "p10": 79.7,
+          "p90": 114.3,
+          "inBand": false,
+          "errPct": -25.4
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "vStartAt": "2026-11-16T05:44:27.500Z",
+      "overshootMin": 0.6,
+      "computeMs": 5645,
+      "elapsedMs": 2673,
+      "rows": [
+        {
+          "line": "HL",
+          "actual": 99,
+          "mean": 85.6,
+          "p10": 77.2,
+          "p90": 94.4,
+          "inBand": false,
+          "errPct": 15.6
+        },
+        {
+          "line": "EM",
+          "actual": 146,
+          "mean": 136.6,
+          "p10": 120.4,
+          "p90": 148.8,
+          "inBand": true,
+          "errPct": 6.9
+        },
+        {
+          "line": "OSM",
+          "actual": 102,
+          "mean": 114.1,
+          "p10": 106.9,
+          "p90": 121.6,
+          "inBand": false,
+          "errPct": -10.6
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "vStartAt": "2026-11-16T07:45:21.500Z",
+      "overshootMin": 0.7,
+      "computeMs": 5715,
+      "elapsedMs": 2580,
+      "rows": [
+        {
+          "line": "HL",
+          "actual": 85,
+          "mean": 71.6,
+          "p10": 51.3,
+          "p90": 90.6,
+          "inBand": true,
+          "errPct": 18.7
+        },
+        {
+          "line": "EM",
+          "actual": 150,
+          "mean": 149.1,
+          "p10": 130.9,
+          "p90": 158.8,
+          "inBand": true,
+          "errPct": 0.6
+        },
+        {
+          "line": "OSM",
+          "actual": 119,
+          "mean": 116.4,
+          "p10": 108.5,
+          "p90": 120.7,
+          "inBand": true,
+          "errPct": 2.2
+        }
+      ]
+    },
+    {
+      "id": 43,
+      "vStartAt": "2026-11-16T09:46:15.500Z",
+      "overshootMin": 0.8,
+      "computeMs": 5196,
+      "elapsedMs": 2495,
+      "rows": [
+        {
+          "line": "HL",
+          "actual": 70,
+          "mean": 58.4,
+          "p10": 36.3,
+          "p90": 76,
+          "inBand": true,
+          "errPct": 19.9
+        },
+        {
+          "line": "EM",
+          "actual": 136,
+          "mean": 140.6,
+          "p10": 133.5,
+          "p90": 146.9,
+          "inBand": true,
+          "errPct": -3.3
+        },
+        {
+          "line": "OSM",
+          "actual": 55,
+          "mean": 91.7,
+          "p10": 73.9,
+          "p90": 105.3,
+          "inBand": false,
+          "errPct": -40.1
+        }
+      ]
+    }
+  ]
+}

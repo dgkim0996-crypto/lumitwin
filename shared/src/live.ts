@@ -228,6 +228,11 @@ export interface SimStatusMsg {
   buffers: Record<string, number>;
   /** 이송 도착 버퍼 (예: T-LED → 헤드램프 조립 앞 LED 모듈) */
   inbound: Record<string, number>;
+  /**
+   * 설비 안 개체: 설비 코드 → 슬롯마다 [묶음 개수, 남은 가공 초] (셋업·가공·배출 대기 중).
+   * 슬롯·배치 설비는 비어 있어도 실린다. What-if 기준 상태가 쓴다. 옛 시뮬레이터면 없다
+   */
+  inproc?: Record<string, [number, number][]>;
   /** 창고 입고 누계 (품목 → 개수) */
   warehouse: Record<string, number>;
   /** 출하 유출(검사를 빠져나간 잠재 불량) 누계 */

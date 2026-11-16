@@ -46,6 +46,8 @@ const SHOTS = [
   { name: 'audit', url: '/audit', wait: 5000, as: 'admin' },
   // P10 TBM 대조: 올린 회의가 있어야 한다 (e2e의 tbm 묶음을 먼저 돌리거나 화면에서 예시 대화록을 올린 뒤). 근거 줄 하나를 눌러 전사에 강조한 상태로 찍는다
   { name: 'tbm', url: '/tbm', wait: 6000, actions: [`document.querySelector('[data-testid=tbm-item][data-status=PARTIAL] button.num, [data-testid=tbm-item] button.num')?.click()`], wait2: 1200 },
+  // P11 What-if: 끝난 실행이 있어야 한다 (e2e의 whatif 묶음을 먼저 돌리거나 화면에서 한 번 실행한 뒤). 화면이 가장 최근 완료 결과를 불러오면 결과 쪽으로 내려 찍는다
+  { name: 'whatif', url: '/whatif', wait: 6000, actions: [`document.querySelector('[data-testid=whatif-results]')?.scrollIntoView({ block: 'start' })`], wait2: 1200 },
 ];
 
 const DEFAULT_AS = 'lead1';

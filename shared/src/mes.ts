@@ -35,6 +35,7 @@ export type PermCode =
   | 'alarm.ack' // 알람 확인
   | 'tbm.record' // TBM 회의 녹음·대화록 올리기 (체크리스트 대조)
   | 'tbm.confirm' // TBM에서 빠진 항목 확인·보완 체크
+  | 'whatif.run' // What-if 계획 시뮬레이션 실행 (결과 보기는 누구나)
   | 'audit.read'; // 감사 기록 조회
 
 export const PERMISSIONS: Record<PermCode, Role[]> = {
@@ -52,6 +53,8 @@ export const PERMISSIONS: Record<PermCode, Role[]> = {
   // TBM은 조장이 진행하고 작업자가 대신 녹음을 올리기도 한다. 빠진 항목의 보완 확인은 진행 책임자인 조장 몫 (assumed)
   'tbm.record': ['operator', 'leader', 'admin'],
   'tbm.confirm': ['leader', 'admin'],
+  // 생산 계획을 세우는 조장, 보전 시기를 정하는 보전 담당이 돌려 본다. 계산이 무거워 작업자·품질은 결과만 본다 (assumed)
+  'whatif.run': ['leader', 'maintenance', 'admin'],
   'audit.read': ['admin'],
 };
 
@@ -69,6 +72,7 @@ export const PERM_NAMES: Record<PermCode, string> = {
   'alarm.ack': '알람 확인',
   'tbm.record': 'TBM 기록 올리기',
   'tbm.confirm': 'TBM 보완 확인',
+  'whatif.run': 'What-if 계획 시뮬레이션',
   'audit.read': '감사 기록 조회',
 };
 

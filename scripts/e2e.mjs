@@ -1,7 +1,7 @@
 // 화면 E2E 시험. 앱을 띄운 상태(npm run dev)에서 헤드리스 Edge·Chrome을 DevTools 프로토콜로 움직인다 (Playwright 없이, 추가 패키지 없음).
 //   node scripts/e2e.mjs              전체
 //   node scripts/e2e.mjs pages auth   고른 묶음만
-// 화면을 열어 오류 없이 그려지는지, 로그인·권한, 실행 MES 흐름(작업지시·불량 처리·Hold·변경점·일보)이 끝까지 도는지 본다.
+// 화면을 열어 오류 없이 그려지는지, 로그인·권한, 실행 MES 흐름(작업지시·불량 처리·Hold·변경점·일보), TBM 대조, What-if 계획 시뮬레이션이 끝까지 도는지 본다.
 // 시연 계정 비밀번호는 DEMO_PASSWORD (기본값은 서버와 같다)
 import { launch, sleep, waitJson } from './lib/cdp.mjs';
 
@@ -99,6 +99,7 @@ const PAGES = [
   ['/operator', '작업자'],
   ['/operator/HL-AS-01', 'HL-AS-01'],
   ['/tbm', 'TBM 점검'],
+  ['/whatif', 'What-if'],
   ['/login', '로그인'],
 ];
 suite(
@@ -397,6 +398,82 @@ suite('tbm', [
       const r = await t.eval(`fetch('/api/v1/assistant/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: '오늘 TBM에서 빠진 항목 있어?', context: { page: '/tbm' } }) }).then((r) => r.text())`);
       t.expect(/tbm_status/.test(r), '비서가 tbm_status 도구를 안 씀');
       t.expect(/안 다룸|불확실|확인 필요/.test(r), `비서 답에 TBM 결과가 없음: ${r.slice(0, 200)}`);
+    },
+  },
+]);
+
+// ─────────────── What-if 계획 시뮬레이션 (시뮬레이터 가상환경이 있어야 한다: npm run sim:setup) ───────────────
+/** data-testid 등으로 찾은 것을 누른다 (버튼 안 글자를 찾으면 버튼까지 올라간다). 막혀 있으면 실패 */
+async function press(t, selector) {
+  const ok = await t.eval(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    const b = el?.closest('button') ?? el;
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  })()`);
+  if (!ok) throw new Error(`누를 것을 못 찾았거나 막혀 있음: ${selector}`);
+  await sleep(400);
+}
+suite('whatif', [
+  {
+    name: '작업자는 What-if를 실행하지 못한다 (403)',
+    async run(t) {
+      await t.login('op1');
+      const r = await t.api('/whatif/runs', { method: 'POST', body: JSON.stringify({ horizonH: 1, reps: 1, base: 'clean', scenarios: [{ name: 'E2E 작업자' }] }) });
+      t.expect(r.status === 403, `기대 403, 받은 ${r.status}`);
+    },
+  },
+  {
+    name: '조장이 계획 2개(둘째에 설비 고장)를 2시간·2회로 돌리면 결과 표가 나온다',
+    async run(t) {
+      await t.login('lead1');
+      await t.goto('/whatif', 3000);
+      const base = `document.querySelector('[data-testid=whatif-base]')`;
+      const state = () => t.eval(`${base}?.dataset.loaded === '1' ? 'ok' : ${base}?.dataset.error === '1' ? 'error' : null`);
+      // 지금 상태(live)를 못 읽으면(시뮬레이터 없음 등) 초기화한 공장(clean)으로 돌린다
+      if ((await t.waitFor(state, '기준 상태 표시', 20_000)) === 'error') {
+        await press(t, '[data-testid=whatif-source][data-value=clean]');
+        await t.waitFor(async () => (await state()) === 'ok', '기준 상태 표시 (clean)', 20_000);
+      }
+      await press(t, '[data-testid=whatif-horizon][data-value="2"]');
+      await press(t, '[data-testid=whatif-reps][data-value="2"]');
+      await press(t, '[data-testid=whatif-copy-base]');
+      const plans = await t.eval(`document.querySelectorAll('[data-testid=whatif-plan]').length`);
+      t.expect(plans === 2, `계획 ${plans}개 (기대 2)`);
+      await press(t, '[data-testid=whatif-plan][data-index="1"] [data-testid=whatif-add-down]');
+      const ev = await t.eval(`document.querySelectorAll('[data-testid=whatif-plan][data-index="1"] [data-testid=whatif-event][data-kind=down]').length`);
+      t.expect(ev === 1, `둘째 계획의 고장 사건 ${ev}개 (기대 1)`);
+      const blocked = await t.eval(`(() => { const b = document.querySelector('[data-testid=whatif-run]'); return b?.disabled ? (b.title || '막힘') : null; })()`);
+      t.expect(!blocked, `조장인데 실행 버튼이 막힘: ${blocked}`);
+
+      // 화면에 이미 떠 있던(지난) 결과와 헷갈리지 않게 실행 번호가 바뀌기를 기다린다
+      const before = await t.eval(`document.querySelector('[data-testid=whatif-status]')?.dataset.id ?? null`);
+      await press(t, '[data-testid=whatif-run]');
+      const got = await t
+        .waitFor(async () => {
+          const err = await t.eval(`document.querySelector('[data-testid=whatif-settings] [role=alert]')?.innerText ?? null`);
+          if (err) throw new Error(`실행 요청 실패: ${err}`);
+          return t.eval(`(() => {
+            const s = document.querySelector('[data-testid=whatif-status]');
+            if (!s || s.dataset.id === ${JSON.stringify(before)}) return null;
+            return s.dataset.status === 'DONE' || s.dataset.status === 'FAILED' ? { id: Number(s.dataset.id), status: s.dataset.status } : null;
+          })()`);
+        }, '계산 끝 (DONE)', 120_000)
+        .catch(async (e) => {
+          // 실패 원인을 가리려고 화면 상태를 같이 남긴다 (탭 숨김이면 주기 조회가 멈춘다)
+          const s = await t.eval(`(() => { const s = document.querySelector('[data-testid=whatif-status]'); return { vis: document.visibilityState, focus: document.hasFocus(), id: s?.dataset.id ?? null, status: s?.dataset.status ?? null }; })()`);
+          throw new Error(`${e.message} · 화면 ${JSON.stringify(s)} · 이전 ${before}`);
+        });
+      if (got.status === 'FAILED') throw new Error(`계산 실패: ${await t.eval(`document.querySelector('[data-testid=whatif-results] [role=alert]')?.innerText ?? ''`)}`);
+
+      const rows = await t.waitFor(() => t.eval(`document.querySelectorAll('[data-testid=whatif-compare] tbody tr').length || null`), '라인별 지표 비교 표', 10_000);
+      t.expect(rows > 3, `비교 표 줄 ${rows}`);
+      const cards = await t.eval(`document.querySelectorAll('[data-testid=whatif-summary]').length`);
+      t.expect(cards === 2, `계획 요약 카드 ${cards}개 (기대 2)`);
+      const v = await t.api(`/whatif/runs/${got.id}`);
+      t.expect(v.body?.request?.scenarios?.[1]?.events?.[0]?.kind === 'down', '서버가 받은 둘째 계획에 고장 사건이 없음');
+      t.expect(v.body?.result?.horizonH === 2 && v.body?.result?.reps === 2, `시간·반복 ${v.body?.result?.horizonH}·${v.body?.result?.reps} (기대 2·2)`);
     },
   },
 ]);

@@ -280,6 +280,8 @@ class LineExec:
     def __init__(self, sim: 'Sim', ln: dict):
         self.sim, self.env = sim, sim.env
         self.code = ln['code']
+        # 수리대 난수 (What-if streams에서는 라인마다 따로)
+        self.xrng = sim.stream(f'{self.code}#repair', x=True)
         self.release = ln.get('release')
         self.variants = [v['code'] for v in ln.get('variants') or ()]
         self.vcycle = {v['code']: v.get('cycle') or {} for v in ln.get('variants') or ()}
@@ -296,6 +298,10 @@ class LineExec:
         self.local_n = 0
         self.wo_ev = None
         self.noplan_told = False
+        # What-if (오프라인 계획 시뮬레이션): 투입할 작업지시 큐와 바닥났을 때 자동 계획 여부. None이면 예전 오프라인 동작
+        self.plan: deque | None = None
+        self.auto_fill = True
+        self.auto_n = 0
         # 불량 처리·격리
         self.desk = simpy.Resource(self.env, capacity=max(1, int(sim.mes.get('repairTechs') or 1)))
         self.pen_n = 0
@@ -319,7 +325,12 @@ class LineExec:
             return
         self.waiting = True
         if self.sim.io is None:
-            self.assign(self.local_wo())
+            wo = self.local_wo()
+            if wo is None:
+                # What-if 계획이 바닥났다: 다시 묻지 않고(waiting 유지) 투입을 멈춘다
+                self.sim.event('wo', f'{self.code} 라인 계획 끝 · 투입 정지')
+                return
+            self.assign(wo)
             return
         self.ask_gen += 1
         self.env.process(self.ask(self.ask_gen))
@@ -350,8 +361,20 @@ class LineExec:
             return
         self.assign(wo)
 
-    def local_wo(self) -> dict:
-        """오프라인 자동 작업지시: 기종을 번갈아 woLot씩"""
+    def local_wo(self) -> dict | None:
+        """오프라인 자동 작업지시: 기종을 번갈아 woLot씩.
+        What-if(plan이 있음): 계획 큐를 차례로 꺼내고, 바닥나면 auto_fill일 때만 서버 자동 계획처럼
+        지금 기종의 다음 기종을 woLot만큼 채운다 (음수 id). 채우지 않으면 None → 투입 공정은 '생산 계획 없음'으로 선다"""
+        if self.plan is not None:
+            if self.plan:
+                return self.plan.popleft()
+            if not self.auto_fill:
+                return None
+            self.auto_n += 1
+            vs = self.variants
+            v = vs[(vs.index(self.variant) + 1) % len(vs)] if self.variant in vs else (vs[0] if vs else None)
+            qty = int((self.sim.mes.get('woLot') or {}).get(self.code, 100))
+            return {'id': -self.auto_n, 'code': f'AUTO-{self.code}-{self.auto_n}', 'variant': v, 'qty': qty}
         self.local_n += 1
         v = self.variants[(self.local_n - 1) % len(self.variants)] if self.variants else None
         qty = int((self.sim.mes.get('woLot') or {}).get(self.code, 100))
@@ -359,8 +382,12 @@ class LineExec:
 
     def assign(self, wo: dict) -> None:
         self.wo = {'id': int(wo['id']), 'code': str(wo.get('code') or wo['id']), 'variant': wo.get('variant'), 'qty': int(wo.get('qty') or 0)}
-        self.released = 0
+        # What-if 계획의 첫 지시는 기준 시각에 이미 투입 중이던 것이라 그만큼 투입한 것으로 이어 간다
+        self.released = int(wo.get('released') or 0) if self.plan is not None else 0
+        prev = self.variant
         self.variant = self.wo['variant'] or self.variant
+        if self.sim.track is not None:
+            self.sim.track.assign(self.code, self.wo, self.released, prev)
         self.waiting = False
         self.reqs.clear()
         self.finished = None
@@ -374,6 +401,8 @@ class LineExec:
         wo = self.wo
         self.released += 1
         load.variant, load.wo = wo['variant'], wo['id']
+        if self.sim.track is not None:
+            self.sim.track.release(self.code, wo['id'])
         if self.released >= int(wo['qty']):
             load.wo_last = True
             self.close_wo('투입 완료')
@@ -401,16 +430,18 @@ class LineExec:
         with self.desk.request() as req:
             yield req
             nominal = float(rule.get('minutes') or 10)
-            minutes = max(nominal * 0.3, nominal * (1 + sim.xrng.gauss(0.0, REPAIR_CV)))
+            minutes = max(nominal * 0.3, nominal * (1 + self.xrng.gauss(0.0, REPAIR_CV)))
             yield self.env.timeout(minutes * 60)
         self.repair_n -= 1
-        ok = sim.xrng.random() < float(rule.get('prob') if rule.get('prob') is not None else 0.85)
+        ok = self.xrng.random() < float(rule.get('prob') if rule.get('prob') is not None else 0.85)
         msg = {'t': sim.now_iso(), 'line': self.code, 'serial': item.serial, 'defect': defect, 'action': action, 'ok': ok, 'minutes': round(minutes, 1)}
         if ok:
             msg['backTo'] = st.code
         sim.publish(T.t_repair(self.code), msg, qos=1)
         if not ok:
             self.scrapped += 1
+            if sim.track is not None:
+                sim.track.scrap(self.code, item.wo)
             return
         self.repaired += 1
         # 고친 개체: 그 불량을 없애고 부품 속성을 기준값으로 되돌린다 (재작업으로 규격 안에 들인다)
@@ -438,7 +469,10 @@ class LineExec:
 
 class Station:
     def __init__(self, sim: 'Sim', line: dict, d: dict):
-        self.sim, self.env, self.rng = sim, sim.env, sim.rng
+        self.sim, self.env = sim, sim.env
+        # 공정 난수·실행 MES 난수. 보통은 공장 전체가 같이 쓰고, What-if(streams)에서는 설비마다 따로 둔다
+        self.rng = sim.stream(d['code'])
+        self.xrng = sim.stream(d['code'], x=True)
         self.line = line['code']
         self.d = d
         self.code = d['code']
@@ -471,6 +505,11 @@ class Station:
         self.batch = int(d.get('batch') or 1)
         self.split = max(1, int(self.step.get('split') or 1))
         self.loader = simpy.Resource(self.env, capacity=1) if self.slots > 1 else None
+        # 설비 안 개체: 슬롯 → (묶음 개수, 남은 시간을 잰 가상 시각(멈춰 있으면 None), 남은 가공 초).
+        # 슬롯·배치 설비는 상태 메시지 inproc로 내보내 What-if가 같은 점유로 시작한다
+        self.inproc: dict[int, tuple[int, float | None, float]] = {}
+        # What-if 기준 상태: 슬롯 → (묶음, 남은 가공 초). None이면 평소대로 시작한다 (터널형은 가득 찬 채)
+        self.preload: dict[int, tuple[list[Load], float]] | None = None
 
         # ── 실행 MES (P9) ──
         mi = sim.mes['stations'].get(self.code) or {}
@@ -502,9 +541,9 @@ class Station:
         self.wear_rate = 0.0
         self.temp = 0.0
         if self.health:
-            self.wear = sim.xrng.uniform(*WEAR_START)
+            self.wear = self.xrng.uniform(*WEAR_START)
             hours = float(self.health.get('wearHours') or 1000)
-            self.wear_rate = (1 + sim.xrng.uniform(-WEAR_RATE_SPREAD, WEAR_RATE_SPREAD)) / (hours * 3600)
+            self.wear_rate = (1 + self.xrng.uniform(-WEAR_RATE_SPREAD, WEAR_RATE_SPREAD)) / (hours * 3600)
             self.temp = float(self.health['temp']) + 18 * self.wear
 
     # ── 시작 ──
@@ -679,12 +718,12 @@ class Station:
         if run and self.wear > WEAR_HIGH and not (self.down or self.stopped or self.pm):
             x = min(1.0, (self.wear - WEAR_HIGH) / (1.0 - WEAR_HIGH))
             lam = WEAR_FAIL_MAX * x * x / (float(self.d.get('mtbf') or 1440) * 60.0)
-            if self.sim.xrng.random() < 1.0 - math.exp(-lam * dt):
+            if self.xrng.random() < 1.0 - math.exp(-lam * dt):
                 self.fail(WEAR_REASON)
-                self.env.process(self._repair_after(self.down_token, self.sim.xrng))
+                self.env.process(self._repair_after(self.down_token, self.xrng))
 
     def health_payload(self) -> dict:
-        h, w, r = self.health, self.wear, self.sim.xrng
+        h, w, r = self.health, self.wear, self.xrng
         if self.state == 'RUN':
             # 진동은 마모 1에서 7배 (신품 A/B 구역 → ISO 10816 C/D 위험 구역까지 닿게, 계약 2.6 수정)
             vib = float(h['vib']) * (1 + VIB_WEAR_GAIN * w * w) * (1 + r.gauss(0.0, 0.04))
@@ -938,22 +977,28 @@ class Station:
     def worker(self, idx: int):
         env = self.env
         # 터널형 설비는 안이 이미 차 있는 상태로 시작한다 (슬롯마다 진행 정도를 고르게 나눈다)
-        warm = self.loader is not None
+        # What-if 기준 상태가 설비 안 개체를 주면 그대로 시작한다 (터널형 가득 채우기 대신)
+        warm = self.loader is not None and self.preload is None
+        seed = self.preload.pop(idx, None) if self.preload is not None else None
         while True:
             yield from self.wait_ready()
-            pre = warm
+            pre = warm or seed is not None
             if warm:
                 warm = False
-                src = self.step['inputs'][0]
-                src_item = self.sim.steps[(self.line, src['step'])]['item'] if 'step' in src else self.step['item']
-                loads = [Load([Item(self.sim.new_serial('WIP'), src_item, self.line, init=True)], {})]
+                loads = [Load([Item(self.sim.new_serial('WIP'), self.input_item(), self.line, init=True)], {})]
                 cycle = self.sample_cycle() * (idx + 1) / self.slots
+                start = env.now
+            elif seed is not None:
+                loads, cycle = seed
+                seed = None
                 start = env.now
             else:
                 self.set_phase(idx, 'wait')
                 loads = yield from self.take(idx)
                 if not loads:
                     continue
+                # 꺼낸 순간부터 설비 안 개체다 (셋업·터널 입구 대기 중에도). 남은 시간은 아직 모르므로 평균 사이클
+                self.inproc[idx] = (len(loads), None, float(self.d['cycle']))
                 yield from self.prepare(idx, loads)
                 yield from self.wait_ready()
                 cycle = self.sample_cycle(loads[0].variant)
@@ -973,6 +1018,7 @@ class Station:
             remaining = cycle - (env.now - start)
             while remaining > 1e-9:
                 t0 = env.now
+                self.inproc[idx] = (len(loads), t0, remaining)
                 pend = [r.ev for r in reqs.values() if not r.ev.triggered]
                 try:
                     if pend:
@@ -986,20 +1032,42 @@ class Station:
                         remaining = 0.0
                 except simpy.Interrupt:
                     remaining -= env.now - t0
+                    self.inproc[idx] = (len(loads), None, max(0.0, remaining))
                     self.set_phase(idx, 'hold')
                     yield from self.wait_ready()
                     self.set_phase(idx, 'run')
             took = env.now - start
+            # 가공은 끝났고 인터록 정산·배출을 기다린다
+            self.inproc[idx] = (len(loads), None, 0.0)
             if reqs:
                 loads = yield from self.ilk_settle(idx, loads, reqs)
                 if not loads:
+                    self.inproc.pop(idx, None)
                     self.set_phase(idx, 'wait')
                     continue
+                self.inproc[idx] = (len(loads), None, 0.0)
             outs = self.finish(loads, start, took)
             self.set_phase(idx, 'block')
             for it in outs:
                 yield self.out.put(it)
+            self.inproc.pop(idx, None)
             self.set_phase(idx, 'wait')
+
+    def input_item(self) -> str:
+        """이 공정에 들어오는 첫 품목 (터널형 채우기·What-if 설비 안 개체에 쓴다)"""
+        ins = self.step.get('inputs') or ()
+        if ins and 'step' in ins[0]:
+            return self.sim.steps[(self.line, ins[0]['step'])]['item']
+        return self.step['item']
+
+    def inproc_payload(self) -> list[list[float]]:
+        """슬롯마다 [묶음 개수, 남은 가공 초]"""
+        now = self.env.now
+        out = []
+        for n, t0, rem in self.inproc.values():
+            left = rem - (now - t0) if t0 is not None else rem
+            out.append([n, round(max(0.0, left), 1)])
+        return out
 
     def make_item(self, load: Load) -> tuple[Item, list[Item]]:
         """이 공정의 결과 품목과 이번에 결합된 부품 목록"""
@@ -1040,7 +1108,7 @@ class Station:
             kids.append(c)
         # 잠재 불량은 연배 중 한 개에만 남는다
         for code in sorted(item.latent):
-            kids[self.sim.xrng.randrange(n)].latent.add(code)
+            kids[self.xrng.randrange(n)].latent.add(code)
         return kids
 
     def judge(self, item: Item, cyc: dict[str, float], lots: dict[str, str], warm: dict | None):
@@ -1130,6 +1198,8 @@ class Station:
                 if load.skip:
                     msg['ilkSkip'] = True
                 self.sim.stats.unit(self.code, ng)
+                if self.final and self.sim.track is not None:
+                    self.sim.track.final(self.line, it, ng)
                 self.sim.publish(T.t_unit(self.line, self.code), msg, qos=1)
                 it.init = False  # 이제 MES가 이 시리얼을 안다
                 self.inspected(load, it, ng, values, first=(n == 0))
@@ -1292,9 +1362,15 @@ class Quarantined:
 
 class Sim:
     def __init__(self, factory: dict, io=None, speed: float = 5.0, realtime: bool = True, seed: int | None = None, tick: float = 1.0,
-                 start: datetime | None = None):
+                 start: datetime | None = None, streams: bool = False):
         self.factory = factory
         self.io = io
+        # 설비별 난수 흐름 (What-if 공통 난수): 켜면 설비·수리대마다 (씨앗, 이름)으로 따로 만든 생성기를 쓴다.
+        # 한 라인에 고장을 넣어도 다른 라인의 난수 순서가 밀리지 않아, 계획끼리 차이가 계획 탓만 남는다. 끄면(기본) 공장 전체가 둘을 같이 쓴다
+        self.streams = bool(streams) and seed is not None
+        self.seed = seed
+        # What-if 집계기 (sim/lumisim/whatif.py Tracker). 실시간·보정 실행에서는 None
+        self.track = None
         self.speed = float(speed)
         self.tick = tick
         self.realtime = realtime
@@ -1302,7 +1378,8 @@ class Sim:
         self.rng = random.Random(seed)
         # 실행 MES 쪽 난수 (수리·마모·상태 감시). 공정 난수와 따로 두어 기존 품질 흐름의 난수 순서를 덜 흔든다
         self.xrng = random.Random(None if seed is None else seed * 7919 + 17)
-        self.start_dt = (start or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
+        self._streams: dict[str, random.Random] = {}
+        self.start_dt =(start or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
         self.running = True
         self.stats = Stats()
         self.serial_seq: Counter = Counter()
@@ -1367,6 +1444,16 @@ class Sim:
     def sim_dt(self, at: float | None = None) -> datetime:
         return self.start_dt + timedelta(seconds=self.env.now if at is None else at)
 
+    def stream(self, key: str, x: bool = False) -> random.Random:
+        """설비·수리대가 쓸 난수 생성기. streams가 꺼져 있으면 공장 공용(rng·xrng), 켜져 있으면 (씨앗, 이름, 종류)로 만든 전용 생성기.
+        문자열 씨앗은 sha512로 바뀌어 실행·프로세스가 달라도 같은 수열을 낸다"""
+        if not self.streams:
+            return self.xrng if x else self.rng
+        k = f'{key}|{"x" if x else "p"}'
+        if k not in self._streams:
+            self._streams[k] = random.Random(f'lumisim|{self.seed}|{k}')
+        return self._streams[k]
+
     def now_iso(self) -> str:
         return iso(self.sim_dt())
 
@@ -1396,6 +1483,8 @@ class Sim:
             msg['station'] = station
         if scenario:
             msg['scenario'] = scenario
+        if self.track is not None:
+            self.track.event(kind, station)
         self.publish(T.T_EVENT, msg, qos=1)
 
     def ship(self, item: Item) -> None:
@@ -1416,6 +1505,12 @@ class Sim:
             ],
             'buffers': {f'{ln}.{st}': len(store.items) for (ln, st), store in self.buffers.items()},
             'inbound': {code: len(store.items) for code, store in self.inbound.items()},
+            # 설비 안 개체 (What-if 기준 상태용): 설비 코드 → [[묶음 개수, 남은 가공 초], …].
+            # 슬롯·배치 설비는 비어 있어도 싣는다 (없으면 What-if가 터널형을 가득 찬 채로 시작한다)
+            'inproc': {
+                st.code: st.inproc_payload() for st in self.stations.values()
+                if not st.utility and (st.inproc or st.slots > 1 or st.batch > 1)
+            },
             'warehouse': dict(self.warehouse),
             'escaped': dict(self.escaped),
             'lines': {code: lx.status() for code, lx in self.lines.items()},
@@ -1572,6 +1667,8 @@ class Sim:
         qs = self._unquarantine(serials)
         for q in qs:
             self.lines[q.st.line].scrapped += 1
+            if self.track is not None:
+                self.track.scrap(q.st.line, q.load.wo)
         return len(qs)
 
     def ng_rule(self, station: str, defect: str) -> dict:
@@ -1613,6 +1710,8 @@ class Sim:
             self.env.process(self._put(st.out, item))
         else:
             lx.scrapped += 1
+            if self.track is not None:
+                self.track.scrap(st.line, item.wo)
         return True
 
     def _put(self, store, item: Item):

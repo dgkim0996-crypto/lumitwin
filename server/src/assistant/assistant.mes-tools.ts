@@ -21,6 +21,7 @@ import {
   NCR_STATUS_NAMES,
   SPECIAL_NAMES,
   STATIONS,
+  WHATIF_STATUS_NAMES,
   WO_SOURCE_NAMES,
   WO_STATUS_NAMES,
   buildControlPlan,
@@ -40,6 +41,8 @@ import {
   type ShiftLineReport,
   type StationEnergy,
   type StationHealth,
+  type WhatIfEvent,
+  type WhatIfScenarioResult,
   type WorkOrderView,
 } from '@lumitwin/shared';
 import { ExecutionService } from '../execution/execution.service';
@@ -49,6 +52,7 @@ import { ReportsService } from '../insights/reports.service';
 import { LiveService } from '../live/live.service';
 import { QualitySystemService } from '../quality-system/quality-system.service';
 import { TbmService } from '../tbm/tbm.service';
+import { WhatIfService } from '../whatif/whatif.service';
 import {
   LINE_PROP,
   STATE_NAMES,
@@ -69,7 +73,8 @@ import {
   type ToolOutcome,
 } from './assistant.common';
 
-// 실행 MES(P9) 조회 도구: 작업지시·인터록·불량 처리(NCR)·Hold, 4M 변경점·초물·관리계획서, 교대 일보·에너지·예지 보전.
+// 실행 MES(P9) 조회 도구: 작업지시·인터록·불량 처리(NCR)·Hold, 4M 변경점·초물·관리계획서, 교대 일보·에너지·예지 보전,
+// TBM 대조(P10), What-if 계획 비교 결과(P11).
 // 모두 조회만 한다. 상태를 바꾸는 일(작업지시 만들기, NCR 판정, Hold 설정·해제, 변경점 승인, 보전 실시)은
 // 권한·감사 기록이 걸려 있어 사람이 화면에서 한다. 비서는 어느 화면에서 하는지 안내만 한다.
 // 결과는 모델이 읽기 좋게 줄인다: 긴 목록은 상위 몇 개만, 시각은 한국 시각 'MM-DD HH:mm'.
@@ -104,6 +109,9 @@ const REPORTS_PAGE = pageRef('/reports', '교대 일보');
 const ENERGY_PAGE = pageRef('/energy', '에너지');
 const MAINT_PAGE = pageRef('/maintenance', '설비 보전');
 const TBM_PAGE = pageRef('/tbm', 'TBM 점검');
+const WHATIF_PAGE = pageRef('/whatif', 'What-if 계획');
+/** What-if 결과에서 계획마다 보여 줄 늦는 작업지시 수 */
+const LATE_N = 6;
 
 /** 관리계획서는 공장 정의로 만들고 바뀌지 않으므로 한 번만 만든다 */
 let cpCache: ControlPlan | null = null;
@@ -223,6 +231,17 @@ export const MES_TOOL_DEFS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'whatif_latest',
+    description:
+      'What-if 계획 시뮬레이션 결과: 가장 최근에 끝난 계산(또는 고른 계산)에서 계획(첫째가 기준)별 라인 생산량·OEE의 평균과 범위(반복의 10~90 백분위), 개당 전력, 가장 오래 멈춘 설비, ' +
+      '납기를 못 지키는 작업지시(시뮬레이션 끝 시각 vs 계산식 예상), 기준 계획 대비 차이, 기준 상태를 만들며 어림한 것. "계획 바꾸면 어떻게 돼", "What-if 비교 결과"에 쓴다. 계산을 돌리지는 않는다.',
+    input_schema: {
+      type: 'object',
+      properties: { run_id: { type: 'integer', minimum: 1, description: 'What-if 계산 번호 (없으면 가장 최근에 끝난 것)' } },
+      additionalProperties: false,
+    },
+  },
 ];
 
 const MES_TOOL_NAMES = new Set(MES_TOOL_DEFS.map((t) => t.name));
@@ -241,6 +260,7 @@ export function mesToolLabel(name: string, input: Input): string | null {
     case 'energy_report': return `에너지 조회${arg('line')}${input.current_shift === true ? ' · 이번 교대' : ''}${typeof input.hours === 'number' ? ` · ${input.hours}시간` : ''}`;
     case 'equipment_health': return `예지 보전 조회${arg('station')}${arg('line')}`;
     case 'tbm_status': return `TBM 대조 조회${arg('line')}${typeof input.meeting_id === 'number' ? ` · #${input.meeting_id}` : ''}`;
+    case 'whatif_latest': return `What-if 결과 조회${typeof input.run_id === 'number' ? ` · #${input.run_id}` : ''}`;
     default: return null;
   }
 }
@@ -259,6 +279,8 @@ export class MesTools {
     private readonly health: HealthService,
     /** 없으면(시험) tbm_status가 실패를 돌려준다 */
     private readonly tbm?: TbmService,
+    /** 없으면(시험) whatif_latest가 실패를 돌려준다 */
+    private readonly whatif?: WhatIfService,
   ) {}
 
   static has(name: string): boolean {
@@ -277,6 +299,7 @@ export class MesTools {
       case 'energy_report': return await this.energyReport(input);
       case 'equipment_health': return this.equipmentHealth(input);
       case 'tbm_status': return await this.tbmStatus(input);
+      case 'whatif_latest': return await this.whatifLatest(input);
       default: return fail(`알 수 없는 도구 ${name}`);
     }
   }
@@ -882,4 +905,88 @@ export class MesTools {
       refs: [TBM_PAGE],
     };
   }
+
+  // ───────────── What-if 계획 시뮬레이션 ─────────────
+
+  async whatifLatest(input: Input): Promise<ToolOutcome> {
+    if (!this.whatif) return fail('What-if 기능을 쓸 수 없습니다');
+    const id = typeof input.run_id === 'number' && Number.isInteger(input.run_id) && input.run_id > 0 ? input.run_id : undefined;
+    let got: Awaited<ReturnType<WhatIfService['latestForAssistant']>>;
+    try {
+      got = await this.whatif.latestForAssistant(id);
+    } catch (e) {
+      return fail((e as Error).message);
+    }
+    const pending = got.pending ? { id: got.pending.id, status: WHATIF_STATUS_NAMES[got.pending.status], progress: `${got.pending.progress.done}/${got.pending.progress.total}` } : null;
+    const note =
+      '분포는 같은 계획을 난수 씨앗만 바꿔 반복한 결과의 평균과 10~90 백분위다. 계획끼리 같은 씨앗을 써서 차이는 운이 아니라 계획에서 나온다. ' +
+      'planEndMin은 계산식 예상(투입 간격 × 수량 + 셋업, 투입을 마치는 시각)이고 finishMin은 시뮬레이션(고장·불량·막힘 포함, 마지막 개체가 최종 공정을 나온 시각)이다. 시각은 시작에서 몇 분 뒤(가상). ' +
+      '계산 실행은 /whatif 에서 조장·보전·관리자(What-if 권한)가 하고, 계획을 MES 대기 순서에 반영하는 것은 조장·관리자(작업지시 관리 권한)다. 비서는 계산하거나 반영하지 않는다.';
+    const v = got.view;
+    if (!v) return { ok: true, data: { run: null, pending, note }, summary: '완료된 What-if 계산 없음', refs: [WHATIF_PAGE] };
+    const run = {
+      id: v.id, status: WHATIF_STATUS_NAMES[v.status], createdAt: kst(v.createdAt), createdBy: v.createdBy,
+      base: v.request.base === 'live' ? '지금 공장 상태' : '초기화한 공장', startAt: kst(v.vStartAt), horizonH: v.request.horizonH, reps: v.request.reps,
+      computeSec: v.result ? r1(v.result.computeMs / 1000) : null, elapsedSec: v.result ? r1(v.result.elapsedMs / 1000) : null,
+    };
+    if (v.status !== 'DONE' || !v.result) {
+      return { ok: true, data: { run, error: v.error, pending, note }, summary: `What-if #${v.id} ${WHATIF_STATUS_NAMES[v.status]}`, refs: [WHATIF_PAGE] };
+    }
+    const r = v.result;
+    const ref = r.scenarios[0];
+    const lateOf = (s: WhatIfScenarioResult) => s.orders.filter((o) => o.dueMin != null && (o.onTimeReps ?? 0) < r.reps);
+    const refLate = ref ? lateOf(ref).length : 0;
+    const scenarios = r.scenarios.map((s, i) => {
+      const late = lateOf(s);
+      return {
+        index: i,
+        name: s.name,
+        isBase: i === 0,
+        autoFill: s.autoFill,
+        events: s.events.map(eventText),
+        total: { out: { mean: r1(s.total.out.mean), p10: r1(s.total.out.p10), p90: r1(s.total.out.p90) }, kwh: r1(s.total.kwh.mean) },
+        lines: s.lines.map((l) => ({
+          line: l.line, name: lineName(l.line),
+          out: { mean: r1(l.out.mean), p10: r1(l.out.p10), p90: r1(l.out.p90) },
+          oeePct: { mean: pct(l.oee.mean), p10: pct(l.oee.p10), p90: pct(l.oee.p90) },
+          kwhPerUnit: r3(l.kwhPerUnit.mean), downMin: r1(l.downMin.mean), setupMin: r1(l.setupMin.mean), changeovers: r1(l.changeovers.mean),
+          topLoss: l.topLoss ? { station: l.topLoss.station, name: stName(l.topLoss.station), minutes: l.topLoss.minutes } : null,
+        })),
+        lateOrders: late.length,
+        late: late.slice(0, LATE_N).map((o) => ({
+          line: o.line, code: o.code, variant: o.variant, qty: o.qty, dueMin: o.dueMin, onTime: `${o.onTimeReps ?? 0}/${r.reps}`,
+          finishMin: o.finishMin ? { mean: o.finishMin.mean, p90: o.finishMin.p90 } : null, unfinishedReps: r.reps - o.finishedReps, planEndMin: o.planEndMin,
+        })),
+        unfinishedPlanned: s.orders.filter((o) => !o.auto && o.finishedReps < r.reps).length,
+        failures: s.failures.slice(0, 3).map((f) => ({ station: f.station, name: stName(f.station), mean: f.mean })),
+        vsBase:
+          i === 0 || !ref
+            ? null
+            : {
+                out: r1(s.total.out.mean - ref.total.out.mean),
+                outPct: ref.total.out.mean > 0 ? pct((s.total.out.mean - ref.total.out.mean) / ref.total.out.mean) : null,
+                lines: s.lines.map((l) => {
+                  const b = ref.lines.find((x) => x.line === l.line);
+                  return { line: l.line, out: r1(l.out.mean - (b?.out.mean ?? 0)), oeePts: r1((l.oee.mean - (b?.oee.mean ?? 0)) * 100) };
+                }),
+                lateOrders: late.length - refLate,
+              },
+      };
+    });
+    const best = scenarios.reduce((a, b) => (b.total.out.mean > a.total.out.mean ? b : a), scenarios[0]);
+    return {
+      ok: true,
+      data: { run, notes: v.base.notes, scenarios, pending, note },
+      summary: `What-if #${v.id} · 계획 ${scenarios.length}개 × 반복 ${r.reps}번${scenarios.length > 1 ? ` · 양품 최다 '${best.name}'` : ''}`,
+      refs: [WHATIF_PAGE],
+    };
+  }
+}
+
+/** 계획의 사건 한 줄 (시작에서 몇 분 뒤) */
+function eventText(e: WhatIfEvent): string {
+  const at = `${r1(e.atMin)}분 뒤`;
+  if (e.kind === 'down') return `${at} ${e.station} ${stName(e.station) ?? ''} 고장 ${r1(e.minutes)}분`.replace(/\s+/g, ' ');
+  if (e.kind === 'pm') return `${at} ${e.station} ${stName(e.station) ?? ''} 보전 실시`.replace(/\s+/g, ' ');
+  return `${at} 공정 이상 '${FACTORY.scenarios.find((s) => s.id === e.id)?.name ?? e.id}' ${e.on ? '켜기' : '끄기'}`;
 }

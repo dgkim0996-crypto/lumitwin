@@ -41,7 +41,8 @@
     "test:sim": "node scripts/sim.mjs --test",
     "screenshots": "node scripts/screenshots.mjs",
     "e2e": "node scripts/e2e.mjs",
-    "loadtest": "node scripts/loadtest.mjs"
+    "loadtest": "node scripts/loadtest.mjs",
+    "whatif:backtest": "node scripts/whatif-backtest.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
