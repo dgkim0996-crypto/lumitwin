@@ -135,6 +135,8 @@ const ACTION_NAMES: Record<string, string> = {
   'change.register': '변경점 신고',
   'change.approve': '변경점 승인',
   'change.first-article': '수동 초물 판정',
+  'whatif.run': 'What-if 계산 실행',
+  'whatif.apply': 'What-if 계획 MES 반영',
 };
 const ACTION_GROUPS: [string, string][] = [
   ['wo.', '작업지시'],

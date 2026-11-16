@@ -443,3 +443,38 @@ model TbmFollowUp {
   @@unique([meetingId, code])
   @@map("tbm_followup")
 }
+
+// ─────────────────────────── What-if 계획 시뮬레이션 (P11) ───────────────────────────
+
+/// What-if 계산 1회: 지금 공장 상태(기준 상태)를 복사해 계획 1~3개를 시뮬레이터로 여러 번 돌린 결과.
+/// 계산 결과라 실행(sim_run)이 바뀌어도 남긴다. MES에 반영(apply)하려면 계산할 때와 같은 실행이어야 한다
+model WhatIfRun {
+  id            Int       @id @default(autoincrement())
+  /// 계산할 때의 시뮬레이터 실행 (없으면 null)
+  runId         Int?      @map("run_id")
+  /// 실제 시각
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy     String?   @map("created_by")
+  /// QUEUED · RUNNING · DONE · FAILED
+  status        String
+  horizonH      Float     @map("horizon_h")
+  reps          Int
+  /// 반복 r의 씨앗 = seed + r (계획끼리 같다)
+  seed          Int
+  /// 서버가 고친 요청 (투입 중 작업지시를 맨 앞에 넣는 등)
+  request       Json
+  /// 기준 상태 (WhatIfBase)
+  base          Json
+  /// 집계 결과 (WhatIfResult, 완료된 것만)
+  result        Json?
+  error         String?
+  progressDone  Int       @default(0) @map("progress_done")
+  progressTotal Int       @default(0) @map("progress_total")
+  /// 기준 상태의 가상 시작 시각
+  vStartAt      DateTime  @map("v_start_at") @db.Timestamptz(3)
+  /// 계산을 시작해 끝날 때까지 (실제 ms)
+  elapsedMs     Int?      @map("elapsed_ms")
+
+  @@index([createdAt])
+  @@map("whatif_run")
+}

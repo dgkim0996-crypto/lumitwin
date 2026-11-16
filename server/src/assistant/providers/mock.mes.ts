@@ -27,6 +27,7 @@ export const MES_HELP = [
   '어제 야간 교대 실적 요약해 줘',
   '이번 교대 전력 제일 많이 쓴 설비는?',
   '오늘 TBM에서 빠진 항목 있어?',
+  '최근 What-if 계획 비교 결과 알려 줘',
 ];
 
 /**
@@ -36,6 +37,13 @@ export const MES_HELP = [
  */
 export async function mesAnswer(m: string, e: MesEntities, call: Call, wantsHow: boolean): Promise<string | null> {
   const has = (re: RegExp) => re.test(m);
+
+  // What-if 계획 비교 ('계획'이 들어 있어 작업지시·생산 계획 규칙보다 먼저 본다)
+  if (has(/what\s*-?\s*if|왓\s*이프|계획\s*(비교|시뮬레이션)|시뮬레이션\s*(비교|결과)/i)) {
+    const id = /#\s*(\d+)/.exec(m)?.[1];
+    const out = await call('whatif_latest', { run_id: id ? Number(id) : undefined });
+    return out.ok ? whatifText(out.data) : out.summary;
+  }
 
   // TBM 회의 대조 ("TBM에서 Hold 공유 빠졌어?"가 Hold 규칙으로 가지 않게 먼저 본다. "TBM 하는 방법"은 작업표준서로)
   if (has(/TBM|티비엠|툴\s*박스|안전\s*회의|아침\s*회의|작업\s*전\s*회의/i) && (!wantsHow || has(/빠|놓|안\s*다|결과|대조|확인|미흡/))) {
@@ -130,6 +138,36 @@ export async function mesAnswer(m: string, e: MesEntities, call: Call, wantsHow:
 }
 
 // ───────────── 답 틀 ─────────────
+
+/** 정수로 반올림해 천 단위 쉼표 */
+const nr = (v: number) => Math.round(v).toLocaleString('ko-KR');
+
+function whatifText(d: Any): string {
+  const pend = d.pending ? `\n\n지금 What-if #${d.pending.id}이(가) ${d.pending.status} (${d.pending.progress})입니다.` : '';
+  if (!d.run) return `아직 끝난 What-if 계산이 없습니다. /whatif 에서 조장·보전 담당이 계획을 넣고 돌릴 수 있습니다.${pend}`;
+  const r = d.run;
+  const head = `What-if #${r.id} (${r.createdAt} · ${r.base}에서 ${r.horizonH}시간 · 반복 ${r.reps}번)`;
+  if (!d.scenarios) return `${head}은(는) ${r.status} 상태입니다.${d.error ? ` ${String(d.error).split('\n')[0]}` : ''}${pend}`;
+  const rows = (d.scenarios as Any[]).map((s) => {
+    const diff = s.vsBase ? `${s.vsBase.out >= 0 ? '+' : ''}${nr(s.vsBase.out)}${s.vsBase.outPct != null ? ` (${s.vsBase.outPct >= 0 ? '+' : ''}${s.vsBase.outPct}%)` : ''}` : '기준';
+    return `| ${s.name} | ${nr(s.total.out.mean)} (${nr(s.total.out.p10)}~${nr(s.total.out.p90)}) | ${diff} | ${s.lateOrders}건 |`;
+  });
+  const oee = (d.scenarios as Any[]).map((s) => `- ${s.name}: ${(s.lines as Any[]).map((l) => `${l.line} ${l.oeePct.mean}% (${l.oeePct.p10}~${l.oeePct.p90})`).join(' · ')}`);
+  const late = (d.scenarios as Any[]).flatMap((s) =>
+    (s.late as Any[]).map((o) => `- [${s.name}] ${o.code} (${o.line} ${o.variant} ${o.qty}개): 납기 ${o.dueMin}분 · 끝 ${o.finishMin ? `평균 ${o.finishMin.mean}분` : '시간 안에 못 끝냄'} · 계산식 예상 ${o.planEndMin ?? '−'}분 · ${o.onTime}번 지킴`),
+  );
+  const loss = (d.scenarios[0]?.lines as Any[] | undefined)?.filter((l) => l.topLoss).map((l) => `${l.line} ${l.topLoss.station} ${l.topLoss.name ?? ''} ${l.topLoss.minutes}분`.replace(/\s+/g, ' ')) ?? [];
+  return [
+    `가장 최근 ${head} 결과입니다.`,
+    `| 계획 | 전체 양품 평균 (10~90%) | 기준 대비 | 납기 못 지킴 |\n|---|---|---|---|\n${rows.join('\n')}`,
+    `라인 OEE 평균 (10~90%):\n${oee.join('\n')}`,
+    late.length ? `납기를 못 지키는 작업지시:\n${late.join('\n')}` : '납기를 정한 작업지시는 모든 반복에서 지켰습니다.',
+    loss.length ? `기준 계획에서 가장 오래 멈춘 설비: ${loss.join(' · ')}` : '',
+    `분포는 난수 씨앗만 바꾼 반복의 평균과 10~90 백분위이고, 계획끼리 같은 씨앗을 써서 차이는 계획에서 나옵니다. 계산·MES 반영은 /whatif 에서 합니다.${pend}`,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
 
 function tbmText(d: Any): string {
   const by: Record<string, string> = { claude: 'Claude', local: '로컬 LLM', mock: '모의 규칙' };

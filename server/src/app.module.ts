@@ -14,6 +14,7 @@ import { ProductionModule } from './production/production.module';
 import { QualitySystemModule } from './quality-system/quality-system.module';
 import { SimController } from './sim-control/sim.controller';
 import { TbmModule } from './tbm/tbm.module';
+import { WhatIfModule } from './whatif/whatif.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { TbmModule } from './tbm/tbm.module';
     ExecutionModule,
     InsightsModule,
     TbmModule,
+    WhatIfModule,
     AssistantModule,
   ],
   controllers: [FactoryController, SimController, AccessController],
